@@ -1,0 +1,128 @@
+# ─────────────────────────────────────────────
+# Python (backend / uv)
+# ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+wheels/
+pip-wheel-metadata/
+*.manifest
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# uv
+.uv/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Type checkers / linters
+.mypy_cache/
+.dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ─────────────────────────────────────────────
+# Node / Frontend (React + Vite + pnpm)
+# ─────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Vite / build outputs
+.vite/
+dist-ssr/
+*.local
+
+# Frontend test / cache
+.eslintcache
+.turbo/
+.next/
+.nuxt/
+.cache/
+
+# ─────────────────────────────────────────────
+# OpenRAG-Lab specific (runtime data)
+# ─────────────────────────────────────────────
+# Local workspaces, indexes, models — never commit user data
+workspaces/
+data/
+models/
+*.gguf
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+
+# Vector / SQLite stores
+*.sqlite
+*.sqlite3
+*.db
+chroma/
+.chroma/
+
+# Logs
+logs/
+*.log
+
+# ─────────────────────────────────────────────
+# Secrets / config
+# ─────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# ─────────────────────────────────────────────
+# IDE / OS
+# ─────────────────────────────────────────────
+.vscode/
+!.vscode/settings.json.example
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*.bak
