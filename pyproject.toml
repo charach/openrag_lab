@@ -11,6 +11,9 @@ keywords = ["rag", "retrieval-augmented-generation", "local-first"]
 dependencies = [
     "pydantic>=2.9,<3",
     "numpy>=1.26,<3",
+    "pymupdf>=1.27.2.3",
+    "chromadb>=1.5.8",
+    "sentence-transformers>=5.4.1",
 ]
 
 [project.optional-dependencies]
