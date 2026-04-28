@@ -442,6 +442,7 @@ fixtures/
 - [ ] **인코딩**이 UTF-8로 명시되어 있는가
 - [ ] **외부 라이브러리**가 세 OS 모두 wheel을 제공하는가
 - [ ] **GPU 가속**이 §3.2 인터페이스를 따르고 fallback이 있는가
+- [ ] **외부 호출**(HTTP/HTTPS)이 §11의 단일 게이트웨이를 통과하는가 (직접 `requests.get`·`httpx.AsyncClient` 인스턴스화 금지)
 - [ ] **OS별 분기**가 도메인 코드로 새지 않고 어댑터·infra에 격리되어 있는가
 - [ ] **테스트**가 세 OS의 fixture를 모두 커버하는가
 
@@ -459,9 +460,172 @@ fixtures/
 
 ---
 
-## 11. 변경 관리
+## 11. 네트워크 및 프록시
+
+본 절은 외부 네트워크 호출(HuggingFace 모델 다운로드, 외부 LLM API)이 사내망·교육기관망 등 **프록시·TLS 인터셉트 환경**에서 동작하기 위한 정책의 단일 출처다. OpenRAG-Lab은 로컬 우선 원칙(설계서 §1)을 따르므로 외부 호출 자체가 옵션이지만, 사용자가 외부 호출을 허용한 경우 본 절의 규칙을 따른다.
+
+### 11.1. 외부 호출 단일 게이트웨이
+
+도메인·어댑터 코드는 직접 HTTP 클라이언트를 인스턴스화하지 않는다. 모든 외부 호출은 `infra/external/http_client.py`(설계서 §13-1, §4 모듈 구조)의 단일 팩토리를 거친다. 이 팩토리가 다음을 일괄 적용한다.
+
+1. 프록시 설정 (§11.2)
+2. CA 번들 (§11.4)
+3. 타임아웃·재시도 (설계서 §9.2-4)
+4. WebSocket `external_call` 이벤트 발행 (설계서 §13-1)
+
+이 게이트웨이를 우회하는 직접 호출(`requests.get(...)`, `urllib.request.urlopen(...)`, `httpx.AsyncClient()` 단발 인스턴스화 등)은 §9 어댑터 체크리스트에서 차단된다.
+
+### 11.2. 프록시 설정 우선순위
+
+프록시 값은 다음 순서로 결정되며, 먼저 발견된 값이 채택된다.
+
+```
+1. 글로벌 settings.yaml의 network.proxy 섹션 (§11.3)
+2. 환경변수 (HTTP_PROXY / HTTPS_PROXY / NO_PROXY)
+3. 환경변수 (소문자: http_proxy / https_proxy / no_proxy)
+4. 프록시 미사용 (직접 연결)
+```
+
+**워크스페이스 YAML(`config.yaml`)에는 프록시를 두지 않는다.** 워크스페이스는 익스포트·공유되는 단위이므로 환경 의존 정보(사내망 프록시 주소 등)가 함께 새어나가지 않게 글로벌 설정에만 둔다 (CONFIG_SCHEMA.md §4.5 참조).
+
+**Windows 시스템 프록시 자동 감지**(WinHTTP/WinINET 레지스트리)는 P1 범위. MVP는 환경변수와 settings.yaml만 신뢰한다.
+
+**OS별 환경변수 차이**:
+
+| OS | 관례 |
+|---|---|
+| macOS / Linux | 소문자 (`http_proxy`)가 표준. 대문자도 widely 지원. |
+| Windows | 대문자 (`HTTP_PROXY`)가 표준. PowerShell·cmd 모두. |
+
+게이트웨이는 **대소문자 모두 검사**하고, 같은 키가 양쪽에 있으면 대문자를 우선한다 (대다수 라이브러리의 관례에 부합).
+
+### 11.3. 글로벌 settings.yaml 스키마 (network 섹션)
+
+`<OPENRAG_HOME>/settings.yaml`의 `network` 섹션. 모든 필드는 선택적(미지정 시 환경변수 또는 직접 연결).
+
+```yaml
+network:
+  proxy:
+    http_proxy: "http://proxy.corp.example.com:8080"
+    https_proxy: "http://proxy.corp.example.com:8080"
+    no_proxy:
+      - "localhost"
+      - "127.0.0.1"
+      - "*.corp.example.com"
+    # 프록시 인증이 필요한 경우 URL에 직접 포함하지 말고 별도 필드 사용
+    # (URL에 비밀번호를 넣으면 로그·에러 메시지에 노출될 위험)
+    auth:
+      username: null
+      password_env: null      # 환경변수 이름 (예: "PROXY_PASSWORD"). 값 자체를 적지 않음.
+  tls:
+    ca_bundle_path: null      # 사내 CA 인증서 (PEM). 사내망 TLS 인터셉트 환경 필수.
+    verify: true              # false는 디버그용. 운영에서는 절대 false 금지 (warning 로그).
+  timeouts:
+    connect_seconds: 10
+    read_seconds: 60
+```
+
+검증 규칙:
+
+- `proxy.auth.password_env`로 지정된 환경변수가 없으면 `PROXY_AUTH_REQUIRED` 에러 (ERROR_CODES.md §8).
+- `tls.verify: false`는 명시적으로 설정해도 매 호출마다 warning 로그.
+- `tls.ca_bundle_path`가 존재하지 않거나 PEM 파싱 실패 시 시작 시 즉시 거부.
+- `proxy.no_proxy`의 와일드카드(`*.example.com`)는 호스트네임 suffix 매칭만 (포트 번호 매칭 안 함).
+
+### 11.4. TLS 인터셉트 (사내 CA) 대응
+
+사내망·교육기관망은 종종 자체 CA로 TLS 트래픽을 재서명하여 인증서 검증을 깬다. 본 프로젝트는 다음 우선순위로 신뢰 저장소를 구성한다.
+
+```
+1. settings.yaml의 network.tls.ca_bundle_path (명시적 경로)
+2. 환경변수 SSL_CERT_FILE / REQUESTS_CA_BUNDLE
+3. truststore 라이브러리로 OS 신뢰 저장소 통합
+   (macOS Keychain · Windows Certificate Store · Linux ca-certificates)
+4. 위 모두 실패 시 certifi 기본 번들
+```
+
+**3번**은 사용자가 사내 IT가 OS 신뢰 저장소에 미리 설치해 둔 사내 CA를 별도 설정 없이 활용하기 위함이다. Python 3.10+의 `truststore` 패키지로 구현하며, MVP에서 기본 활성화한다.
+
+TLS 검증 실패 시: `PROXY_TLS_VERIFICATION_FAILED` (ERROR_CODES.md §8). 사용자에게 사내 CA 등록 가이드를 안내.
+
+### 11.5. NO_PROXY 정책
+
+다음 호스트는 항상 프록시를 우회한다 (사용자 설정과 무관하게 강제 추가).
+
+```
+localhost
+127.0.0.1
+::1
+<OpenRAG-Lab 자체 백엔드 호스트>  (PLATFORM.md §5.3, 기본 127.0.0.1)
+```
+
+이는 같은 머신의 백엔드↔프런트엔드 통신이 외부 프록시를 통과하지 않게 보장하기 위함이다.
+
+### 11.6. 프록시 적용 대상 / 비대상
+
+| 호출 | 프록시 적용 |
+|---|---|
+| HuggingFace 모델 다운로드 (P0) | ✅ |
+| 외부 LLM API (OpenRouter, Gemini, OpenAI, Anthropic, P1) | ✅ |
+| OpenRAG-Lab 자체 REST/WebSocket (로컬 루프백) | ❌ (§11.5에 따라 강제 우회) |
+| ChromaDB 임베디드 모드 | n/a (네트워크 호출 없음) |
+| 텔레메트리·자동 업데이트 체크 | MVP에 없음. P2 도입 시 본 절에 추가. |
+
+### 11.7. 진단 및 관찰 가능성
+
+`/system/profile` 응답(API 명세서 §5)에 `network` 필드를 포함한다.
+
+```json
+"network": {
+  "proxy_in_use": true,
+  "proxy_source": "settings.yaml",     // settings.yaml | env | none
+  "tls_ca_source": "truststore",        // explicit | env | truststore | certifi
+  "tls_verify": true
+}
+```
+
+비밀번호·실제 프록시 URL은 응답에 포함하지 않는다 (호스트만, 포트 마스킹).
+
+### 11.8. 어댑터 구현 가이드
+
+새 어댑터가 외부 호출을 할 때:
+
+```python
+# ❌ 금지
+import httpx
+async def fetch(url: str) -> bytes:
+    async with httpx.AsyncClient() as client:
+        return (await client.get(url)).content
+
+# ✅ 권장
+from infra.external.http_client import get_http_client
+async def fetch(url: str) -> bytes:
+    client = get_http_client()  # 프록시·CA·타임아웃·이벤트 발행 일괄 적용
+    return await client.fetch_bytes(url)
+```
+
+게이트웨이는 동일 설정에 대해 동일 클라이언트 인스턴스를 재사용한다 (커넥션 풀링).
+
+### 11.9. 테스트
+
+**필수 회귀 테스트** (§8.2 표에 추가될 항목):
+
+| 시나리오 | 검증 포인트 |
+|---|---|
+| `HTTPS_PROXY=http://localhost:9999`로 잘못된 프록시 지정 | 5초 내 명확한 에러, 무한 행 없음 |
+| settings.yaml에 사내 CA 지정 후 자체 서명 HTTPS 호출 | 검증 통과 |
+| `no_proxy`에 `*.internal`·실제 외부 도메인 매칭 | 매칭/비매칭 모두 정확 |
+| 프록시 인증 실패 (407) | `PROXY_AUTH_REQUIRED` 발생 |
+| `tls.verify: false` 시 warning 로그 발생 | 로그 검증 |
+
+테스트 fixture로 `tests/fixtures/proxy/`에 작은 squid 또는 mitmproxy 설정을 둔다 (CI에서는 컨테이너 또는 Python 단일 프로세스 fake로 대체).
+
+---
+
+## 12. 변경 관리
 
 - 본 문서는 OS 의존 결정의 **단일 출처(SSoT)**다.
 - 컨셉(v2), 설계서(SDD v1), API 명세서(v2)와 충돌 시 본 문서가 우선.
 - 다른 문서를 갱신하기 전 본 문서를 먼저 갱신하고, 변경 내역을 다른 문서에 전파.
 - 새 OS·아키텍처 지원 추가 시 §1.2, §1.3, §3.1, §6.2, §8.1을 순서대로 갱신.
+- 새 외부 호출 경로(어댑터·서비스) 추가 시 §11.6 표를 갱신하고, 직접 클라이언트 인스턴스화가 아닌 §11.1 게이트웨이를 사용하는지 PR 리뷰에서 확인.

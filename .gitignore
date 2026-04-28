@@ -89,6 +89,10 @@ models/
 chroma/
 .chroma/
 
+# OpenRAG-Lab runtime
+runtime.lock
+settings.local.yaml
+
 # Logs
 logs/
 *.log

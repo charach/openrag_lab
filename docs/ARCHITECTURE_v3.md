@@ -11,6 +11,7 @@
 > **변경 이력**:
 > - v1→v2: §1에 OS 중립성 원칙 추가 / §2에 OS별 wheel 기준 명시 / §11.2 OS별 디렉토리 표준 / 곳곳에 PLATFORM.md 링크.
 > - v2→v3: 검색 전용 모드 명시 / 외부 LLM 4종 어댑터 추가 / 임베딩 차원별 컬렉션 분리 / §13 모든 결정사항 확정 처리.
+> - v3 보강: `infra/external/http_client.py`가 프록시·사내 CA 번들 적용 지점임을 §4·§13-1에 명시 (PLATFORM.md §11과 짝).
 
 ---
 
@@ -229,7 +230,9 @@ openrag-lab/
 │   │   ├── secrets/                   # P1
 │   │   │   └── keystore.py            # 외부 LLM API 키 저장 (settings.yaml + chmod 600)
 │   │   └── external/                  # P1
-│   │       └── http_client.py         # 외부 호출 단일 게이트웨이, WS 이벤트 발행
+│   │       └── http_client.py         # 외부 호출 단일 게이트웨이.
+│   │                                  # 프록시·CA 번들·타임아웃·재시도·WS `external_call` 이벤트 일괄 적용.
+│   │                                  # 직접 클라이언트 인스턴스화 금지 — PLATFORM.md §11 참조.
 │   │
 │   ├── config/
 │   │   ├── settings.py                # 앱 설정 (환경변수)
@@ -993,7 +996,7 @@ gantt
    - 4개 제공자 (OpenRouter, Gemini, OpenAI, Anthropic) 어댑터를 P1로 추가.
    - `adapters/llms/_base_external.py` 베이스 클래스: 키 등록 확인 → 키 없으면 `EXTERNAL_API_KEY_NOT_REGISTERED` 발생, 자동 다운로드·자동 진행 금지.
    - `infra/secrets/keystore.py`: 글로벌 settings.yaml에 `chmod 600`으로 키 저장. OS별 secure storage(Keychain, Credential Manager 등)는 P2.
-   - `infra/external/http_client.py`: 외부 호출의 단일 게이트웨이. 모든 호출 시 WebSocket으로 `external_call` 이벤트 발행.
+   - `infra/external/http_client.py`: 외부 호출의 단일 게이트웨이. 모든 호출 시 WebSocket으로 `external_call` 이벤트 발행. **프록시·사내 CA 번들 적용 지점이기도 함** (PLATFORM.md §11). 도메인·어댑터는 이 게이트웨이만 사용하고 `httpx.AsyncClient()` 등의 직접 인스턴스화는 §1·§9 import-linter 규칙으로 차단.
 
 2. ~~타깃 OS 우선순위~~ → **결정됨 (v2)**: macOS · Windows · Linux 동등 지원. 상세 정책은 `PLATFORM.md` §1.
 

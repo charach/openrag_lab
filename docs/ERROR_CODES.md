@@ -9,6 +9,7 @@
 > **포함되지 않는 것**: 로그 전용 식별자, 외부 라이브러리의 native 예외.
 > **변경 이력**:
 > - v1→v2: 외부 LLM 키 등록 관련 코드 4개 추가 / `LICENSE_NOT_ACCEPTED` 정식 등록 / `RETRIEVAL_ONLY_MODE` 정보 코드 추가.
+> - v2→v3: 프록시·TLS 관련 코드 2개 추가 (`PROXY_AUTH_REQUIRED`, `PROXY_TLS_VERIFICATION_FAILED`).
 
 ---
 
@@ -601,6 +602,47 @@ API 키가 settings.yaml에 없음.
 
 ---
 
+### `PROXY_AUTH_REQUIRED`
+**HTTP**: 502 / **Recoverable**: ✅
+**발생**: 외부 호출 시 프록시 서버가 407 Proxy Authentication Required 응답. 또는 settings.yaml의 `network.proxy.auth.password_env`로 지정한 환경변수가 비어 있음 (PLATFORM.md §11.3).
+
+```json
+{ "code": "PROXY_AUTH_REQUIRED",
+  "message": "프록시 인증에 실패했습니다. 자격 증명을 확인하세요.",
+  "recoverable": true,
+  "details": {
+    "proxy_host": "proxy.corp.example.com:8080",
+    "auth_source": "settings.yaml",
+    "missing_env_var": "PROXY_PASSWORD"
+  } }
+```
+
+비밀번호 자체나 `username` 외 PII는 응답에 포함하지 않는다. `proxy_host`는 호스트:포트만 (스킴·credentials 미포함).
+
+**UI 처리**: 글로벌 설정 → 네트워크 화면으로 안내. 환경변수 설정 가이드 링크.
+
+---
+
+### `PROXY_TLS_VERIFICATION_FAILED`
+**HTTP**: 502 / **Recoverable**: ✅
+**발생**: 외부 호출의 TLS 핸드셰이크 검증 실패. 사내망 TLS 인터셉트 환경에서 사내 CA가 신뢰 저장소에 없을 때 흔함 (PLATFORM.md §11.4).
+
+```json
+{ "code": "PROXY_TLS_VERIFICATION_FAILED",
+  "message": "TLS 인증서 검증에 실패했습니다. 사내 CA 인증서 등록이 필요할 수 있습니다.",
+  "recoverable": true,
+  "details": {
+    "host": "huggingface.co",
+    "ca_source": "truststore",
+    "underlying": "self signed certificate in certificate chain",
+    "remedy": "settings.yaml의 network.tls.ca_bundle_path에 사내 CA(PEM) 경로를 지정하세요."
+  } }
+```
+
+**UI 처리**: 사내 CA 등록 가이드 모달 (PLATFORM.md §11.4 링크). `network.tls.verify: false`는 디버그용으로만 안내하고 권장하지 않음.
+
+---
+
 ## 9. 설정 (YAML) 에러
 
 ### `CONFIG_VALIDATION_FAILED`
@@ -797,6 +839,10 @@ function handleApiError(error: ApiError) {
       return showReindexModal();
     case "PATH_TOO_LONG":
       return showLongPathHelp();
+    case "PROXY_AUTH_REQUIRED":
+      return showProxyAuthHelp(error.details);
+    case "PROXY_TLS_VERIFICATION_FAILED":
+      return showCaBundleHelp(error.details);
 
     // 진행 중 태스크로 안내
     case "INDEXING_IN_PROGRESS":
@@ -839,6 +885,8 @@ function handleApiError(error: ApiError) {
 | `FILE_LOCKED` | `tests/integration/parsers/test_pdf.py` (Windows only) | 같은 파일을 다른 핸들로 잠근 상태 |
 | `BACKEND_NOT_AVAILABLE` | `tests/unit/config/test_validate.py` | metal 명시 + 가짜 windows profile |
 | `INSTANCE_ALREADY_RUNNING` | `tests/integration/system/test_lock.py` | runtime.lock 선점 |
+| `PROXY_AUTH_REQUIRED` | `tests/integration/external/test_proxy.py` | fake 프록시가 407 응답 |
+| `PROXY_TLS_VERIFICATION_FAILED` | `tests/integration/external/test_proxy.py` | 자체 서명 인증서 + ca_bundle 미지정 |
 
 ---
 
