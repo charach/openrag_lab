@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from openrag_lab.domain.models.ids import WorkspaceId
 
-
 _NAME_MIN = 1
 _NAME_MAX = 200
 _TAG_MIN = 1

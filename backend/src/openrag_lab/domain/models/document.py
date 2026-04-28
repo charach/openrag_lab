@@ -17,7 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from openrag_lab.domain.models.enums import DocumentFormat
 from openrag_lab.domain.models.ids import DocumentId, WorkspaceId
 
-
 _HASH_CHUNK_BYTES = 1 << 20  # 1 MiB streaming reads — never load whole file.
 
 

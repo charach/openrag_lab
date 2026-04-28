@@ -17,7 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from openrag_lab.domain.models.enums import ChunkingStrategy
 from openrag_lab.domain.models.ids import ChunkId, DocumentId
 
-
 # Bounds mirror docs/CONFIG_SCHEMA.md §4.3.1 + §7.2.
 MIN_CHUNK_SIZE = 32
 MAX_CHUNK_SIZE = 4096
