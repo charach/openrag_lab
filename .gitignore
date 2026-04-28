@@ -60,6 +60,7 @@ yarn-error.log*
 .vite/
 dist-ssr/
 *.local
+*.tsbuildinfo
 
 # Frontend test / cache
 .eslintcache
@@ -71,10 +72,12 @@ dist-ssr/
 # ─────────────────────────────────────────────
 # OpenRAG-Lab specific (runtime data)
 # ─────────────────────────────────────────────
-# Local workspaces, indexes, models — never commit user data
-workspaces/
-data/
-models/
+# Local workspaces, indexes, models — never commit user data.
+# Anchored to project root so they don't accidentally ignore
+# legitimate dirs like backend/tests/unit/models/.
+/workspaces/
+/data/
+/models/
 *.gguf
 *.bin
 *.safetensors

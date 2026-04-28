@@ -1,0 +1,40 @@
+[importlinter]
+root_package = openrag_lab
+include_external_packages = True
+
+# ----------------------------------------------------------------------------
+# Contract 1: Domain layer purity (CONTRIBUTING.md §2.2).
+# Domain knows nothing about app, adapters, infra, or external libraries.
+# ----------------------------------------------------------------------------
+[importlinter:contract:domain-purity]
+name = Domain must not import app/adapters/infra or heavy external libs
+type = forbidden
+source_modules =
+    openrag_lab.domain
+forbidden_modules =
+    openrag_lab.app
+    openrag_lab.adapters
+    openrag_lab.infra
+    openrag_lab.config
+    sentence_transformers
+    chromadb
+    llama_cpp
+    fastapi
+    starlette
+    sqlite3
+    sqlalchemy
+    httpx
+    requests
+    pymupdf
+    fitz
+
+# ----------------------------------------------------------------------------
+# Contract 2: Adapters do not depend on the application layer.
+# ----------------------------------------------------------------------------
+[importlinter:contract:adapters-below-app]
+name = Adapters must not import app
+type = forbidden
+source_modules =
+    openrag_lab.adapters
+forbidden_modules =
+    openrag_lab.app
