@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from openrag_lab.app.services.runtime import RuntimeFactories, default_factories
 from openrag_lab.app.ws.hub import WebSocketHub
+from openrag_lab.config.settings import GlobalSettings, default_settings
 from openrag_lab.domain.models.hardware import SystemProfile
 from openrag_lab.domain.models.ids import ExperimentId, TaskId
 from openrag_lab.domain.services.task_queue import TaskQueue
@@ -27,6 +28,7 @@ class AppState:
 
     layout: WorkspaceLayout
     profile: SystemProfile
+    settings: GlobalSettings = field(default_factory=default_settings)
     factories: RuntimeFactories = field(default_factory=default_factories)
     hub: WebSocketHub = field(default_factory=WebSocketHub)
     task_queue: TaskQueue = field(default_factory=lambda: TaskQueue(max_concurrent=1))

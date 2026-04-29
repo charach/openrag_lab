@@ -7,11 +7,12 @@ import { App } from "./App";
 beforeAll(() => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
-      new Response(JSON.stringify({ items: [], presets: [] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ items: [], presets: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
     ),
   );
 });

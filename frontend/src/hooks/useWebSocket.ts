@@ -21,11 +21,7 @@ export interface UseWebSocketOptions {
   enabled?: boolean;
 }
 
-export function useWebSocket({
-  topics,
-  onMessage,
-  enabled = true,
-}: UseWebSocketOptions): void {
+export function useWebSocket({ topics, onMessage, enabled = true }: UseWebSocketOptions): void {
   const handlerRef = useRef(onMessage);
   handlerRef.current = onMessage;
 

@@ -23,17 +23,54 @@ from openrag_lab.app.api.tasks import router as tasks_router
 from openrag_lab.app.api.workspaces import router as workspaces_router
 from openrag_lab.app.errors import install_exception_handlers
 from openrag_lab.app.runtime_lock import acquire, release
+from openrag_lab.app.services.runtime import RuntimeFactories
 from openrag_lab.app.state import AppState
 from openrag_lab.app.ws.endpoint import router as ws_router
+from openrag_lab.config.settings import load as load_settings
 from openrag_lab.infra.fs.workspace_layout import default_layout
 from openrag_lab.infra.hardware.probe import probe_system
 
 
+def _e2e_factories() -> RuntimeFactories:
+    """Deterministic adapter wiring used when ``OPENRAG_LAB_TEST_MODE=1``.
+
+    Lets Playwright drive the real HTTP surface without pulling in
+    sentence-transformers / Chroma / a local LLM. Echoes through
+    ``EchoLLM`` so chat answers are stable across runs.
+    """
+    from openrag_lab.adapters.embedders.fake import FakeEmbedder
+    from openrag_lab.adapters.evaluators.llm_judge import LLMJudge
+    from openrag_lab.adapters.llms.null import EchoLLM
+    from openrag_lab.adapters.vector_stores.in_memory import InMemoryVectorStore
+
+    shared_store = InMemoryVectorStore()
+    echo = EchoLLM()
+    return RuntimeFactories(
+        embedder=lambda _model_id: FakeEmbedder(dim=32),
+        vector_store=lambda _ws_id, _path: shared_store,
+        llm=lambda _llm_id: echo,
+        judge=lambda _judge_id: LLMJudge(echo),
+    )
+
+
 def _bootstrap_state() -> AppState:
+    import os
+
+    from openrag_lab.app.services.runtime import default_factories
+
     layout = default_layout()
     layout.ensure()
     profile = probe_system()
-    return AppState(layout=layout, profile=profile)
+    settings = load_settings(layout.settings_yaml)
+    factories = (
+        _e2e_factories() if os.environ.get("OPENRAG_LAB_TEST_MODE") == "1" else default_factories()
+    )
+    return AppState(
+        layout=layout,
+        profile=profile,
+        settings=settings,
+        factories=factories,
+    )
 
 
 def create_app(*, state: AppState | None = None) -> FastAPI:

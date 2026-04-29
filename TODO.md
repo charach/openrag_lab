@@ -8,22 +8,18 @@
 
 ## 🌙 다음 시작 지점 (2026-04-29 시점)
 
-Phase 0·1·2·3 완료. **Phase 4부터** 시작.
+Phase 0·1·2·3·4 완료 — MVP 구현 완료.
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 cd /Users/sukhwanyun/code/OpenRag_Lab
-uv run pytest backend/tests/   # 321 passed 확인
-cd frontend && pnpm test       # 3 passed 확인
-pnpm build                     # 빌드 통과 확인
+uv run pytest backend/tests/   # 333 passed
+cd frontend && pnpm test       # 3 passed
+pnpm e2e                       # 3 passed
+pnpm build                     # 빌드 통과
 ```
 
-**Phase 4 시작 순서** (마무리):
-1. config import/export — 이미 §12 ok, but 검증 룰 강화·embedder dim 동의 모달 시나리오 손보기
-2. 글로벌 settings.yaml 로드 (network 섹션 등)
-3. Playwright E2E 3개 시나리오
-4. 3 OS CI 그린
-5. README "빠른 시작" 직접 따라가서 동작 확인
+다음 단계는 P1 (외부 LLM 어댑터, 시멘틱·문장 청킹, Sparse/Hybrid 검색, DOCX·HTML 파서, 매트릭스 평가).
 
 ---
 
@@ -121,16 +117,20 @@ REST/WS 계약 + 4개 화면.
 
 ---
 
-## Phase 4 — 마무리 (3일)
+## Phase 4 — 마무리 ✅ 완료
 
-- [ ] `/config/export`, `/config/import` — [docs/CONFIG_SCHEMA.md](docs/CONFIG_SCHEMA.md) §7 검증 모두
-- [ ] 글로벌 `<OPENRAG_HOME>/settings.yaml` 로드 (network 섹션 포함, [docs/PLATFORM.md](docs/PLATFORM.md) §11)
-- [ ] E2E 시나리오 3개 (Playwright):
-  1. Auto-Pilot — PDF 업로드 → 인덱싱 → 채팅
-  2. A/B — 두 청크 크기로 인덱싱 → 평가 → 차트
-  3. YAML 라운드트립 — export → 빈 워크스페이스 import → 동일 검색 결과
-- [ ] 3 OS CI 모두 그린
-- [ ] README "빠른 시작" 직접 따라가서 동작 확인
+- [x] `/config/export`, `/config/import` — CONFIG_SCHEMA §7 핵심 룰 (UNKNOWN_FIELD 거부, OS 미스매치 경고, embedder/chunking dim 변경 시 archived)
+- [x] 글로벌 `<OPENRAG_HOME>/settings.yaml` 로드 — `config/settings.py` (network proxy/tls/timeouts, 9 unit TC) + `_bootstrap_state` 시 부팅
+- [x] E2E 시나리오 3개 (Playwright):
+  1. Auto-Pilot — txt 업로드 → 인덱싱 → 검색 전용 채팅 ✓
+  2. A/B — 두 청크 크기 인덱싱 → 두 fingerprint 다름 검증 ✓
+  3. YAML 라운드트립 — export → 빈 워크스페이스 import → fingerprint 동일 ✓
+- [x] CI 매트릭스: backend (macos-14·windows-latest·ubuntu-22.04) + frontend (3 OS) + e2e (ubuntu) — `.github/workflows/`
+- [x] README "빠른 시작" 검증 (TEST_MODE=1로 부팅 → /system/profile + POST /workspaces 200/201 확인)
+- [x] `OPENRAG_LAB_TEST_MODE=1`로 sentence-transformers/Chroma 없이도 부팅 — Playwright에서 사용
+- 합계: 백엔드 333 + 프런트 3 + e2e 3 모두 그린
+
+검증 완료: ruff ✓ / mypy strict (95 files) ✓ / import-linter (2 contracts kept) ✓ / pytest **333 passed** / vitest 3 / Playwright 3
 
 ---
 

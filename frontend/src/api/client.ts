@@ -25,10 +25,7 @@ export class ApiException extends Error {
   }
 }
 
-async function request<T>(
-  path: string,
-  init?: RequestInit & { json?: unknown },
-): Promise<T> {
+async function request<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const headers = new Headers(init?.headers);
   const finalInit: RequestInit = { ...init };
   if (init?.json !== undefined) {
@@ -42,8 +39,7 @@ async function request<T>(
   if (!resp.ok) {
     if (contentType.includes("application/json")) {
       const payload = (await resp.json()) as { error?: ApiError };
-      if (payload.error)
-        throw new ApiException(resp.status, payload.error);
+      if (payload.error) throw new ApiException(resp.status, payload.error);
     }
     throw new ApiException(resp.status, {
       code: "UNKNOWN",
@@ -185,9 +181,7 @@ export const api = {
   deleteWorkspace: (id: string): Promise<void> =>
     request(`/workspaces/${id}`, { method: "DELETE" }),
 
-  listDocuments: (
-    workspaceId: string,
-  ): Promise<{ items: DocumentItem[]; next_cursor: null }> =>
+  listDocuments: (workspaceId: string): Promise<{ items: DocumentItem[]; next_cursor: null }> =>
     request(`/workspaces/${workspaceId}/documents`),
 
   uploadDocuments: async (

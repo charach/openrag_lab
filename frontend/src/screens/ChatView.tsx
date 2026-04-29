@@ -5,11 +5,7 @@
  */
 
 import { useEffect, useState } from "react";
-import {
-  api,
-  type ChatResponse,
-  type ExperimentSummary,
-} from "../api/client";
+import { api, type ChatResponse, type ExperimentSummary } from "../api/client";
 import { useWorkspaceStore } from "../stores/workspace";
 
 export function ChatView(): JSX.Element {

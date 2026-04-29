@@ -6,11 +6,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import {
-  api,
-  type ChunkPreviewResponse,
-  type DocumentItem,
-} from "../api/client";
+import { api, type ChunkPreviewResponse, type DocumentItem } from "../api/client";
 import { useWorkspaceStore } from "../stores/workspace";
 
 export function ChunkingLab(): JSX.Element {
@@ -130,9 +126,7 @@ export function ChunkingLab(): JSX.Element {
             }}
           >
             <small>#{c.sequence}</small>
-            <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>
-              {c.content.slice(0, 280)}
-            </pre>
+            <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{c.content.slice(0, 280)}</pre>
           </li>
         ))}
       </ul>

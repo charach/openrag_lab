@@ -181,6 +181,7 @@ async def import_config(
 
     workspace_block = payload.get("workspace") or {}
     config_block = payload.get("config") or {}
+    meta_block = payload.get("meta") or {}
     if not isinstance(workspace_block, dict) or not isinstance(config_block, dict):
         raise HttpError(
             status_code=422,
@@ -190,8 +191,55 @@ async def import_config(
             details={},
         )
 
+    # Surface oddly-named keys early — typos often hide behind silent ignores.
+    errors: list[dict[str, str]] = []
+    _allowed_workspace = {"name", "description", "tags"}
+    _allowed_config = {
+        "embedder_id",
+        "chunking",
+        "retrieval_strategy",
+        "top_k",
+        "reranker_id",
+        "llm_id",
+        "judge_llm_id",
+    }
+    for key in workspace_block:
+        if key not in _allowed_workspace:
+            errors.append(
+                {
+                    "path": f"workspace.{key}",
+                    "code": "UNKNOWN_FIELD",
+                    "message": f"알 수 없는 필드: workspace.{key}",
+                }
+            )
+    for key in config_block:
+        if key not in _allowed_config:
+            errors.append(
+                {
+                    "path": f"config.{key}",
+                    "code": "UNKNOWN_FIELD",
+                    "message": f"알 수 없는 필드: config.{key}",
+                }
+            )
+    if errors:
+        raise HttpError(
+            status_code=422,
+            code="CONFIG_VALIDATION_FAILED",
+            message="설정 검증 실패",
+            recoverable=True,
+            details={"errors": errors},
+        )
+
     new_config = _config_from_dict(config_block)
     previous = _latest_config(registry, ws_id)
+
+    warnings: list[str] = []
+    exported_from = meta_block.get("exported_from_os") if isinstance(meta_block, dict) else None
+    if isinstance(exported_from, str) and exported_from != state.profile.os.name:
+        warnings.append(
+            f"OPENRAG_VERSION_OS_MISMATCH:exported_from={exported_from},"
+            f"current={state.profile.os.name}"
+        )
 
     # Update workspace meta if anything changed.
     name = workspace_block.get("name", workspace.meta.name)
@@ -224,4 +272,5 @@ async def import_config(
         "embedder_dim_changed": embedder_dim_changed,
         "previous_experiments_will_be_archived": archived,
         "fingerprint": new_config.fingerprint(),
+        "warnings": warnings,
     }

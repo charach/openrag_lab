@@ -69,6 +69,11 @@ dist-ssr/
 .nuxt/
 .cache/
 
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+
 # ─────────────────────────────────────────────
 # OpenRAG-Lab specific (runtime data)
 # ─────────────────────────────────────────────

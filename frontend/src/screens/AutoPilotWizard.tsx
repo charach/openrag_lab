@@ -33,7 +33,10 @@ export function AutoPilotWizard(): JSX.Element {
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
 
   useEffect(() => {
-    api.systemProfile().then(setProfile).catch((e) => setError(String(e)));
+    api
+      .systemProfile()
+      .then(setProfile)
+      .catch((e) => setError(String(e)));
     api.systemPresets().then((r) => {
       setPresets(r.presets);
       const recommended = r.presets.find((p) => p.recommended);
@@ -41,10 +44,7 @@ export function AutoPilotWizard(): JSX.Element {
     });
   }, []);
 
-  const topics = useMemo(
-    () => (task ? [task.websocket_topic] : []),
-    [task],
-  );
+  const topics = useMemo(() => (task ? [task.websocket_topic] : []), [task]);
   useWebSocket({
     topics,
     enabled: task !== null,
@@ -97,8 +97,7 @@ export function AutoPilotWizard(): JSX.Element {
               name="preset"
               disabled={!p.available}
             />
-            {p.name} {p.recommended ? "★" : ""} —{" "}
-            <small>{p.rationale}</small>
+            {p.name} {p.recommended ? "★" : ""} — <small>{p.rationale}</small>
           </label>
         ))}
       </fieldset>
@@ -107,17 +106,12 @@ export function AutoPilotWizard(): JSX.Element {
         <legend>2단계 — 워크스페이스</legend>
         <label>
           이름:
-          <input
-            value={workspaceName}
-            onChange={(e) => setWorkspaceName(e.target.value)}
-          />
+          <input value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} />
         </label>
         <input
           type="file"
           multiple
-          onChange={(e) =>
-            setFiles(e.target.files ? Array.from(e.target.files) : [])
-          }
+          onChange={(e) => setFiles(e.target.files ? Array.from(e.target.files) : [])}
         />
       </fieldset>
 
@@ -131,9 +125,7 @@ export function AutoPilotWizard(): JSX.Element {
           <h3>인덱싱 진행</h3>
           <p>task_id: {task.task_id}</p>
           <p>experiment_id: {task.experiment_id}</p>
-          <p>
-            현재: {progress ? `${progress.type} ${(progress.ratio as number) ?? ""}` : "대기"}
-          </p>
+          <p>현재: {progress ? `${progress.type} ${(progress.ratio as number) ?? ""}` : "대기"}</p>
           <Link to="/chat">→ 채팅으로 가기</Link>
         </article>
       )}

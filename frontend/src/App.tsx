@@ -16,10 +16,8 @@ export function App(): JSX.Element {
       <header>
         <h1>OpenRAG-Lab</h1>
         <nav>
-          <Link to="/">Auto-Pilot</Link> |{" "}
-          <Link to="/chunking">Chunking Lab</Link> |{" "}
-          <Link to="/chat">Chat</Link> |{" "}
-          <Link to="/experiments">Experiments</Link>
+          <Link to="/">Auto-Pilot</Link> | <Link to="/chunking">Chunking Lab</Link> |{" "}
+          <Link to="/chat">Chat</Link> | <Link to="/experiments">Experiments</Link>
         </nav>
       </header>
       <Routes>

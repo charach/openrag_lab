@@ -158,6 +158,78 @@ def test_export_unknown_workspace_returns_404(app_state: AppState) -> None:
     assert resp.status_code == 404
 
 
+def test_import_rejects_unknown_workspace_field(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        body = yaml.safe_dump(
+            {
+                "version": "1",
+                "workspace": {"name": "x", "unknown_field": 1},
+                "config": {
+                    "embedder_id": "fake-embedder",
+                    "chunking": {"strategy": "recursive", "chunk_size": 64},
+                },
+            }
+        )
+        resp = client.post(
+            f"/workspaces/{ws}/config/import",
+            content=body,
+            headers={"content-type": "application/yaml"},
+        )
+    assert resp.status_code == 422
+    body_json = resp.json()
+    assert body_json["error"]["code"] == "CONFIG_VALIDATION_FAILED"
+    error_paths = {e["path"] for e in body_json["error"]["details"]["errors"]}
+    assert "workspace.unknown_field" in error_paths
+
+
+def test_import_rejects_typo_in_config_field(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        body = yaml.safe_dump(
+            {
+                "version": "1",
+                "workspace": {"name": "x"},
+                "config": {
+                    "embeder_id": "typo!",  # missing 'd'
+                    "chunking": {"strategy": "recursive", "chunk_size": 64},
+                },
+            }
+        )
+        resp = client.post(
+            f"/workspaces/{ws}/config/import",
+            content=body,
+            headers={"content-type": "application/yaml"},
+        )
+    assert resp.status_code == 422
+    paths = {e["path"] for e in resp.json()["error"]["details"]["errors"]}
+    assert "config.embeder_id" in paths
+
+
+def test_import_warns_on_os_mismatch(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        body = yaml.safe_dump(
+            {
+                "version": "1",
+                "workspace": {"name": "x"},
+                "config": {
+                    "embedder_id": "fake-embedder",
+                    "chunking": {"strategy": "recursive", "chunk_size": 64},
+                },
+                "meta": {"exported_from_os": "windows"},
+            }
+        )
+        resp = client.post(
+            f"/workspaces/{ws}/config/import",
+            content=body,
+            headers={"content-type": "application/yaml"},
+        )
+    assert resp.status_code == 200
+    warnings = resp.json()["warnings"]
+    assert any("OS_MISMATCH" in w for w in warnings)
+
+
 def test_import_round_trip(app_state: AppState) -> None:
     with TestClient(create_app(state=app_state)) as client:
         ws = _create_ws(client, "original")
