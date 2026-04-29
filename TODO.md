@@ -8,19 +8,22 @@
 
 ## 🌙 다음 시작 지점 (2026-04-29 시점)
 
-Phase 0·1·2 완료. **Phase 3부터** 시작.
+Phase 0·1·2·3 완료. **Phase 4부터** 시작.
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 cd /Users/sukhwanyun/code/OpenRag_Lab
-uv run pytest backend/tests/  # 253 passed 확인
+uv run pytest backend/tests/   # 321 passed 확인
+cd frontend && pnpm test       # 3 passed 확인
+pnpm build                     # 빌드 통과 확인
 ```
 
-**Phase 3 시작 순서** (API + UI):
-1. `app/main.py` FastAPI 셋업 + DI
-2. REST 엔드포인트 ([docs/API_SPEC_v4.md](docs/API_SPEC_v4.md))
-3. WebSocket Hub
-4. 프런트 4 화면 (Auto-Pilot, Chat, ChunkingLab, ExperimentMatrix)
+**Phase 4 시작 순서** (마무리):
+1. config import/export — 이미 §12 ok, but 검증 룰 강화·embedder dim 동의 모달 시나리오 손보기
+2. 글로벌 settings.yaml 로드 (network 섹션 등)
+3. Playwright E2E 3개 시나리오
+4. 3 OS CI 그린
+5. README "빠른 시작" 직접 따라가서 동작 확인
 
 ---
 
@@ -94,24 +97,27 @@ uv run pytest backend/tests/  # 253 passed 확인
 
 ---
 
-## Phase 3 — API + UI (1주)
+## Phase 3 — API + UI ✅ 완료
 
-REST/WS 계약을 깔고 4개 화면.
+REST/WS 계약 + 4개 화면.
 
-### 백엔드 API
-- [ ] `app/main.py` FastAPI 셋업 + DI
-- [ ] REST 엔드포인트 ([docs/API_SPEC_v4.md](docs/API_SPEC_v4.md)): workspaces / documents / chunking / indexing / chat / experiments / system
-- [ ] WebSocket Hub (progress, log, token, error, complete)
-- [ ] 에러 미들웨어 — 도메인 예외 → [docs/ERROR_CODES.md](docs/ERROR_CODES.md) §12 매핑
-- [ ] `runtime.lock` 단일 인스턴스 보장 ([docs/PLATFORM.md](docs/PLATFORM.md) §5.4)
-- [ ] OpenAPI → 프런트 타입 자동 생성
+### 백엔드 API ✅
+- [x] `app/main.py` FastAPI 셋업 + DI (RuntimeFactories: embedder/vector_store/llm/judge 주입 가능)
+- [x] REST 엔드포인트 — system / workspaces / documents / chunking / indexing / chat / golden-sets / experiments / config / tasks
+- [x] WebSocket Hub (`app/ws/hub.py`) + `/ws` endpoint (subscribe/publish, exponential backoff 가이드 준수)
+- [x] 에러 미들웨어 (`app/errors.py`) — 도메인 예외 → ERROR_CODES.md §12 매핑
+- [x] `runtime.lock` 단일 인스턴스 보장 (`app/runtime_lock.py`)
+- [ ] OpenAPI → 프런트 타입 자동 생성 (현재 수동 client.ts; P1 또는 Phase 4 자투리)
 
-### 프런트
-- [ ] `AutoPilotWizard.tsx` — 비전문가 흐름
-- [ ] `ChatView.tsx` — citation + 토큰 스트리밍 + 검색 전용 배지
-- [ ] `ChunkingLab.tsx` — preview, 청크 색상 오버레이
-- [ ] `ExperimentMatrix.tsx` + `ExperimentResults.tsx` — A/B 차트 (Recharts)
-- [ ] WS 훅 + Zustand 스토어 4종
+### 프런트 ✅
+- [x] `AutoPilotWizard.tsx` — 프리셋 선택 → 워크스페이스 + 업로드 → 인덱싱 + WS 진행률
+- [x] `ChatView.tsx` — 실험 선택, 질문, citation 청크 표시, 검색 전용 모드 배지
+- [x] `ChunkingLab.tsx` — strategy/size/overlap 슬라이더 + 색상 오버레이 미리보기
+- [x] `ExperimentMatrix.tsx` — RAGAS 4지표 표 + 그룹 막대그래프 (Recharts)
+- [x] `useWebSocket` 훅 + Zustand `workspace` 스토어
+- 합계: 백엔드 API 통합 TC 68개 (전체 321 passed) / 프런트 vitest 3개 / pnpm build 통과
+
+검증 완료: ruff ✓ / mypy strict (94 files) ✓ / import-linter (2 contracts kept) ✓ / pytest **321 passed** / frontend typecheck + vitest + build ✓
 
 ---
 

@@ -1,12 +1,33 @@
 /**
- * Top-level shell. Phase 0 placeholder — replaced by AutoPilotWizard / ChatView /
- * ChunkingLab / ExperimentMatrix in later phases (see TODO.md Phase 3).
+ * Top-level shell — four-screen MVP wired through React Router.
+ * Each route maps to one of the wizard / chat / chunking / matrix views
+ * referenced in TODO.md Phase 3.
  */
+
+import { Link, Route, Routes } from "react-router-dom";
+import { AutoPilotWizard } from "./screens/AutoPilotWizard";
+import { ChatView } from "./screens/ChatView";
+import { ChunkingLab } from "./screens/ChunkingLab";
+import { ExperimentMatrix } from "./screens/ExperimentMatrix";
+
 export function App(): JSX.Element {
   return (
     <main>
-      <h1>OpenRAG-Lab</h1>
-      <p>로컬 지능형 RAG 워크벤치 — Phase 0 스캐폴딩.</p>
+      <header>
+        <h1>OpenRAG-Lab</h1>
+        <nav>
+          <Link to="/">Auto-Pilot</Link> |{" "}
+          <Link to="/chunking">Chunking Lab</Link> |{" "}
+          <Link to="/chat">Chat</Link> |{" "}
+          <Link to="/experiments">Experiments</Link>
+        </nav>
+      </header>
+      <Routes>
+        <Route path="/" element={<AutoPilotWizard />} />
+        <Route path="/chunking" element={<ChunkingLab />} />
+        <Route path="/chat" element={<ChatView />} />
+        <Route path="/experiments" element={<ExperimentMatrix />} />
+      </Routes>
     </main>
   );
 }
