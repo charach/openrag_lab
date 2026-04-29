@@ -2,46 +2,25 @@
 
 > **범위**: P0만. P1·P2는 [docs/REQUIREMENTS_v4.md](docs/REQUIREMENTS_v4.md) §3·§7 참조.
 > **작업 룰**: [docs/CLAUDE.md](docs/CLAUDE.md) 황금률 5가지 + 절대 금지 6항목 엄수.
-> **수직 슬라이스 우선**: 한 phase 끝나야 다음으로. Phase 1 끝에 빈약하더라도 인덱싱-검색이 한 번 돌아가게.
+> **수직 슬라이스 우선**: 한 phase 끝나야 다음으로.
 
 ---
 
-## 🌙 내일 시작 지점 (2026-04-28 → 2026-04-29)
+## 🌙 다음 시작 지점 (2026-04-29 시점)
 
-**먼저 할 일**: chunker WIP 복원 + TC 수정.
+Phase 0·1·2 완료. **Phase 3부터** 시작.
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 cd /Users/sukhwanyun/code/OpenRag_Lab
-
-# 1. 어제 stash 한 chunker 코드+TC 복원
-git stash pop                  # stash@{0}: phase1 chunker WIP
-
-# 2. TC를 ChunkingConfig 검증 룰에 맞게 수정 — 모든 chunk_size를 >=32로,
-#    text 길이도 비례해서 늘리기. CONFIG_SCHEMA.md §4.3.1 (32~4096 토큰).
-#    수정 대상:
-#      backend/tests/integration/adapters/chunkers/test_fixed.py
-#      backend/tests/integration/adapters/chunkers/test_recursive.py
-
-# 3. 검증
-uv run pytest backend/tests/integration/adapters/chunkers/ -v
-uv run ruff check . && uv run ruff format --check . && uv run mypy backend/src && uv run lint-imports
+uv run pytest backend/tests/  # 253 passed 확인
 ```
 
-⚠️ stash 사유: TC 작성 시 `chunk_size=4, 5, 10` 등 작은 값을 썼는데 ChunkingConfig는 `>=32` 강제. production 코드(`fixed.py`, `recursive.py`)는 이상 없으나 32+ 값으로 직접 검증은 미실행.
-
-**그 다음 순서** (Phase 1 라이트 잔여):
-1. `infra/fs/workspace_layout.py` (OS별 경로, [docs/PLATFORM.md](docs/PLATFORM.md) §2) + TC
-2. `infra/cache/{parse_cache, embedding_cache}` + TC
-3. `infra/hardware/probe.py` + TC
-4. (선택) `infra/db/repositories/` 레포 4종 + TC
-
-**Phase 1 헤비 (별도 세션 권장 — 대용량 다운로드/컴파일)**:
-- `adapters/parsers/pdf_pymupdf.py` (pymupdf wheel)
-- `adapters/embedders/sentence_transformers.py` (PyTorch + 모델 다운로드)
-- `adapters/vector_stores/chroma.py` (chromadb)
-- `adapters/llms/llama_cpp.py` (C++ 빌드 + GGUF 모델)
-- `adapters/evaluators/llm_judge.py` (llm 어댑터 의존)
+**Phase 3 시작 순서** (API + UI):
+1. `app/main.py` FastAPI 셋업 + DI
+2. REST 엔드포인트 ([docs/API_SPEC_v4.md](docs/API_SPEC_v4.md))
+3. WebSocket Hub
+4. 프런트 4 화면 (Auto-Pilot, Chat, ChunkingLab, ExperimentMatrix)
 
 ---
 
@@ -63,51 +42,55 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy backend/src &
 
 ---
 
-## Phase 1 — 어댑터 수직 슬라이스 (1주) — 🟡 진행 중
+## Phase 1 — 어댑터 수직 슬라이스 ✅ 완료
 
-도메인 인터페이스 → 어댑터 → infra. 끝나면 인덱싱-검색이 한 번 돈다.
+도메인 인터페이스 → 어댑터 → infra. 인덱싱-검색이 end-to-end 동작 확인됨.
 
 ### 도메인 포트 정의 ✅
-- [x] `domain/ports/` Protocol 6종: parser, chunker, embedder, vector_store, llm, evaluator_judge → [domain/ports/](backend/src/openrag_lab/domain/ports/)
-- [x] `domain/errors.py` 예외 계층 — Phase 0에서 함께 작성 → [errors.py](backend/src/openrag_lab/domain/errors.py)
+- [x] `domain/ports/` Protocol 6종: parser, chunker, embedder, vector_store, llm, evaluator_judge
+- [x] `domain/errors.py` 예외 계층
 
-### 어댑터 — 라이트 (순수 로직)
-- [x] `adapters/parsers/txt.py` + TC 9개 통과 ✓
-- [x] `adapters/parsers/markdown.py` + TC 5개 통과 ✓ (frontmatter 스트립 포함)
-- [⚠️ stash@{0}] `adapters/chunkers/fixed.py` — 코드 + TC 작성, TC `chunk_size<32` 위반으로 stash 처리 (내일 복원 + 수정)
-- [⚠️ stash@{0}] `adapters/chunkers/recursive.py` — 동일 사유로 stash
+### 어댑터 — 라이트 ✅
+- [x] `adapters/parsers/txt.py` + TC 9개
+- [x] `adapters/parsers/markdown.py` + TC 5개 (frontmatter 스트립)
+- [x] `adapters/chunkers/fixed.py` + `_token.py` + TC
+- [x] `adapters/chunkers/recursive.py` + TC (separator priority, Korean boundary)
+- 합계: chunker 31 TC
 
-### 어댑터 — 헤비 (별도 세션, 대용량 의존성)
-- [ ] `adapters/parsers/pdf_pymupdf.py` (pymupdf wheel 필요)
-- [ ] `adapters/embedders/sentence_transformers.py` — 백엔드 자동 선택 ([docs/PLATFORM.md](docs/PLATFORM.md) §3.3) — PyTorch + 모델 다운로드
-- [ ] `adapters/vector_stores/chroma.py` — 차원별 컬렉션 분리 (`vectors_<embedder_id_short>_<dim>`) — chromadb 설치
-- [ ] `adapters/llms/llama_cpp.py` — 로컬 LLM (외부 LLM은 P1) — C++ 빌드 + GGUF 모델
-- [ ] `adapters/evaluators/llm_judge.py` — 4개 지표 (LLM 어댑터 선행 필요)
+### 어댑터 — 헤비 ✅
+- [x] `adapters/parsers/pdf_pymupdf.py` + TC 7개 (encrypted/empty/missing 포함)
+- [x] `adapters/embedders/fake.py` (deterministic) + `sentence_transformers_embedder.py` (실제) + TC 7개
+- [x] `adapters/vector_stores/in_memory.py` (브루트포스 NumPy) + `chroma.py` (PersistentClient) + TC 14개
+- [x] `adapters/llms/null.py` (NullLLM + EchoLLM) + TC 5개
+- [x] `adapters/evaluators/llm_judge.py` (RAGAS 4지표) + TC 6개
+- ⏸️ `adapters/llms/llama_cpp.py` — P1 보류 (C++ 빌드 + GGUF 모델 부담). 외부 LLM 어댑터 도입 시 함께 처리.
 
-### Infra
-- [x] `infra/db/sqlite.py` + 마이그레이션 — Phase 0에서 작성, TC 7개 통과
-- [ ] `infra/db/repositories/` (workspace, document, chunk, experiment, golden_set 5종)
-- [ ] `infra/cache/`: embedding_cache, parse_cache (캐시 키 [docs/ARCHITECTURE_v3.md](docs/ARCHITECTURE_v3.md) §8.3)
-- [ ] `infra/fs/workspace_layout.py` — OS별 표준 경로 ([docs/PLATFORM.md](docs/PLATFORM.md) §2)
-- [ ] `infra/hardware/probe.py` — CPU/RAM/GPU 탐지
+### Infra ✅
+- [x] `infra/db/sqlite.py` + 마이그레이션 — Phase 0
+- [x] `infra/db/repositories/` 6종 (workspace, document, chunk, experiment, golden_set, checkpoint) + TC 41개
+- [x] `infra/cache/parse_cache.py` + `embedding_cache.py` + TC 16개
+- [x] `infra/fs/workspace_layout.py` — OS별 경로 + TC 16개
+- [x] `infra/hardware/probe.py` — CPU/RAM/GPU + TC 6개
+- [x] `domain/models/hardware.py` — SystemProfile/CPUInfo/GPUInfo
 
-### 검증
-- [ ] 각 어댑터 통합 테스트 — [docs/PLATFORM.md](docs/PLATFORM.md) §9 어댑터 체크리스트 통과
-- [x] 한글·이모지·공백 경로 fixture 포함 — txt 파서 TC, workspace meta TC에서 적용 중
+### 검증 ✅
+- [x] 한글·이모지·공백 경로 fixture (txt 파서, workspace_layout, repository TC 등)
+- [x] End-to-end smoke test: txt → chunk → embed → in-memory vector store → search 동작 확인
 
 ---
 
-## Phase 2 — 도메인 서비스 (1주)
+## Phase 2 — 도메인 서비스 ✅ 완료
 
 오케스트레이션 + 비즈니스 로직.
 
-- [ ] `IndexingService` — 체크포인트 재개 (PARSED → CHUNKED → EMBEDDED, [docs/ARCHITECTURE_v3.md](docs/ARCHITECTURE_v3.md) §6.1)
-- [ ] `RetrievalService` — Dense만 (Sparse·Hybrid는 P1)
-- [ ] `EvaluationService` — 4개 지표, 검색 전용 모드 시 LLM 의존 지표 `null`
-- [ ] `GoldenSetService` — 직접 입력 + CSV 업로드
-- [ ] `HardwareProfiler` + `PresetRecommender` — 하드웨어 → 모델 추천
-- [ ] `RAGPipeline` — `is_retrieval_only` 분기점, 검색 전용 모드 P0
-- [ ] `TaskQueue` (asyncio.Semaphore, max_concurrent=1) + `CancellationToken`
+- [x] `IndexingService` — 체크포인트 재개 (PARSED → CHUNKED → EMBEDDED), 부분 실패 isolation, 취소 토큰 + 진행률 reporter
+- [x] `RetrievalService` — Dense (Sparse·Hybrid는 P1)
+- [x] `EvaluationService` — 4지표, 검색 전용 모드 시 LLM 의존 지표 `null` 보고
+- [x] `GoldenSetService` — `parse_csv()` (직접 입력 + CSV 업로드)
+- [x] `HardwareProfiler` + `PresetRecommender` — RAM 기반 lite/balanced/quality 프리셋
+- [x] `RAGPipeline` — `is_retrieval_only` 분기점, NullLLM 가드 포함
+- [x] `TaskQueue` (asyncio.Semaphore, max_concurrent=1) + `CancellationToken` + `ProgressReporter`
+- 합계: 서비스 37 TC, end-to-end smoke 동작 확인 (index → retrieve → evaluate)
 
 ---
 
