@@ -161,3 +161,38 @@ def test_upload_to_unknown_workspace_returns_404(app_state: AppState) -> None:
     with TestClient(create_app(state=app_state)) as client:
         result = _upload(client, "ws_notreal", ("a.txt", "x"))
     assert result["_status"] == 404
+
+
+def test_upload_filename_with_path_traversal_is_sanitized(app_state: AppState) -> None:
+    """PROBLEM.md P-001 — ``../../etc/passwd`` must not escape documents/."""
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        result = _upload(client, ws, ("../../../etc/evil.txt", "evil"))
+    assert result["_status"] == 201
+    # Filename was stripped to its basename — the file lives inside documents/.
+    uploaded = result["uploaded"]
+    assert len(uploaded) == 1
+    assert uploaded[0]["filename"] == "evil.txt"
+
+    # No ``etc/`` directory was created under OPENRAG_HOME.
+    home = app_state.layout.root
+    assert not (home / "etc").exists()
+
+
+def test_upload_pure_dotdot_filename_rejected(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        result = _upload(client, ws, ("..", "x"))
+    assert result["_status"] == 201
+    failed = result["failed"]
+    assert len(failed) == 1
+    assert failed[0]["error"]["code"] == "PATH_OUTSIDE_WORKSPACE"
+
+
+def test_upload_windows_separator_filename_sanitized(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        result = _upload(client, ws, ("..\\..\\evil.txt", "evil"))
+    uploaded = result["uploaded"]
+    assert len(uploaded) == 1
+    assert uploaded[0]["filename"] == "evil.txt"

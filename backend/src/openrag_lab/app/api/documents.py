@@ -26,10 +26,31 @@ from openrag_lab.domain.models.document import Document
 from openrag_lab.domain.models.enums import ChunkingStrategy
 from openrag_lab.domain.models.ids import DocumentId, WorkspaceId, new_document_id
 from openrag_lab.infra.db.repositories.document_repo import DocumentRepository
+from openrag_lab.infra.fs.workspace_layout import is_inside
 
 router = APIRouter(tags=["documents"])
 
 _HASH_CHUNK = 1 << 20  # 1 MiB streaming hash chunks
+
+
+def _safe_filename(raw: str) -> str:
+    """Strip directory components and reject empty/dotfile-only names.
+
+    Defends against ``../../etc/passwd``-style traversal that the upload
+    handler would otherwise honor when joining the workspace documents
+    dir with ``UploadFile.filename`` (PLATFORM.md §2.4).
+    """
+    # ``Path.name`` discards everything before the final separator on
+    # POSIX. On Windows we additionally have to handle backslashes.
+    name = Path(raw.replace("\\", "/")).name
+    if not name or name in {".", ".."}:
+        raise ParseError(
+            "파일명이 올바르지 않습니다.",
+            code="PATH_OUTSIDE_WORKSPACE",
+            recoverable=False,
+            details={"filename": raw},
+        )
+    return name
 
 
 class ChunkingPreviewBody(BaseModel):
@@ -129,13 +150,14 @@ async def upload_documents(
     with registry.open(ws_id) as conn:
         repo = DocumentRepository(conn)
         for upload in files:
-            filename = upload.filename or "untitled"
+            raw_filename = upload.filename or "untitled"
             try:
+                filename = _safe_filename(raw_filename)
                 fmt = detect_format(filename)
             except ParseError as exc:
                 failed.append(
                     {
-                        "filename": filename,
+                        "filename": raw_filename,
                         "error": {
                             "code": exc.code,
                             "message": exc.user_message,
@@ -146,6 +168,24 @@ async def upload_documents(
                 continue
 
             target = paths.documents_dir / filename
+            # Belt-and-suspenders: even after the basename strip, refuse
+            # to write outside ``documents_dir`` (catches symlink + odd
+            # filesystem cases that ``Path.name`` alone wouldn't).
+            documents_root = paths.documents_dir.resolve()
+            documents_root.mkdir(parents=True, exist_ok=True)
+            if not is_inside(documents_root, target):
+                failed.append(
+                    {
+                        "filename": raw_filename,
+                        "error": {
+                            "code": "PATH_OUTSIDE_WORKSPACE",
+                            "message": "파일명이 워크스페이스 디렉토리를 벗어납니다.",
+                            "recoverable": False,
+                        },
+                    }
+                )
+                continue
+
             try:
                 size_bytes, sha = await _save_and_hash(target, upload)
             except OSError as exc:
