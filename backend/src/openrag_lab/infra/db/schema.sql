@@ -74,6 +74,21 @@ CREATE TABLE IF NOT EXISTS golden_pair (
     expected_chunk_ids_json TEXT
 );
 
+CREATE TABLE IF NOT EXISTS chat_turn (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    experiment_id   TEXT NOT NULL REFERENCES experiment(id) ON DELETE CASCADE,
+    question        TEXT NOT NULL,
+    answer          TEXT,
+    citations_json  TEXT NOT NULL DEFAULT '[]',
+    chunks_json     TEXT NOT NULL DEFAULT '[]',
+    latency_ms      INTEGER,
+    tokens          INTEGER,
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_turn_experiment ON chat_turn(experiment_id, created_at);
+
 CREATE TABLE IF NOT EXISTS indexing_checkpoint (
     workspace_id        TEXT NOT NULL,
     document_id         TEXT NOT NULL,

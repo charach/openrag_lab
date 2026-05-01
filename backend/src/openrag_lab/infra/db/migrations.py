@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from importlib import resources
 from typing import Final
 
-CURRENT_SCHEMA_VERSION: Final[int] = 1
+CURRENT_SCHEMA_VERSION: Final[int] = 2
 
 _PACKAGE = "openrag_lab.infra.db"
 
@@ -26,9 +26,31 @@ def _initial_schema_sql() -> str:
     return resources.files(_PACKAGE).joinpath("schema.sql").read_text(encoding="utf-8")
 
 
+# Adds the chat_turn table for persistent per-experiment chat history (5.4).
+# v1 DBs predate the table — guard with IF NOT EXISTS so re-running on a
+# fresh DB (which already has it from schema.sql) is a no-op.
+_V2_CHAT_TURN_SQL = """
+CREATE TABLE IF NOT EXISTS chat_turn (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    experiment_id   TEXT NOT NULL REFERENCES experiment(id) ON DELETE CASCADE,
+    question        TEXT NOT NULL,
+    answer          TEXT,
+    citations_json  TEXT NOT NULL DEFAULT '[]',
+    chunks_json     TEXT NOT NULL DEFAULT '[]',
+    latency_ms      INTEGER,
+    tokens          INTEGER,
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_turn_experiment ON chat_turn(experiment_id, created_at);
+"""
+
+
 # version -> SQL script that brings the DB from (version - 1) to version.
 MIGRATIONS: Final[dict[int, str]] = {
     1: _initial_schema_sql(),
+    2: _V2_CHAT_TURN_SQL,
 }
 
 

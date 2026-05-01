@@ -2,22 +2,34 @@
  * Chat surface — pick an experiment from the rail, ask a question, and see
  * retrieved chunks side-by-side with the answer (or just the chunks when the
  * experiment is in retrieval-only mode, API_SPEC §9.1.1).
+ *
+ * Turns persist server-side (5.4); selecting an experiment loads recent
+ * history. Per-turn delete + regenerate are wired to /turns endpoints.
  */
 
 import { useEffect, useState, type KeyboardEvent } from "react";
-import { api, type ChatResponse, type ExperimentSummary } from "../api/client";
+import {
+  api,
+  type ChatChunk,
+  type ChatTurnRecord,
+  type ExperimentSummary,
+} from "../api/client";
 import { useWorkspaceStore } from "../stores/workspace";
-import { Icon, PageHeader, RetrievalOnlyBadge } from "../components/ui";
+import { Icon, Modal, PageHeader, RetrievalOnlyBadge } from "../components/ui";
+
+type TurnView = ChatTurnRecord & { _pending?: boolean };
 
 export function ChatView(): JSX.Element {
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const [experiments, setExperiments] = useState<ExperimentSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
-  const [response, setResponse] = useState<ChatResponse | null>(null);
+  const [history, setHistory] = useState<TurnView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeChunk, setActiveChunk] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<TurnView | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -31,19 +43,68 @@ export function ChatView(): JSX.Element {
       .catch((e) => setError(String(e)));
   }, [workspaceId]);
 
-  const ask = async (): Promise<void> => {
-    if (!workspaceId || !selected || !question.trim()) return;
+  useEffect(() => {
+    if (!workspaceId || !selected) {
+      setHistory([]);
+      return;
+    }
+    api
+      .listTurns(workspaceId, selected)
+      .then((r) => {
+        const ordered = [...r.items].sort(
+          (a, b) => Date.parse(a.created_at) - Date.parse(b.created_at),
+        );
+        setHistory(ordered);
+        setActiveChunk(null);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [workspaceId, selected]);
+
+  const ask = async (overrideQuestion?: string): Promise<void> => {
+    if (!workspaceId || !selected) return;
+    const q = (overrideQuestion ?? question).trim();
+    if (!q) return;
     setLoading(true);
     setError(null);
     setActiveChunk(null);
     try {
-      const res = await api.chat(workspaceId, { experiment_id: selected, question });
-      setResponse(res);
+      const res = await api.chat(workspaceId, { experiment_id: selected, question: q });
+      const turn: TurnView = {
+        id: res.turn_id,
+        experiment_id: selected,
+        question: q,
+        answer: res.answer,
+        citations: res.citations ?? [],
+        chunks: res.retrieval.chunks,
+        latency_ms: res.retrieval.latency_ms,
+        tokens: 0,
+        created_at: new Date().toISOString(),
+      };
+      setHistory((prev) => [...prev, turn]);
+      if (overrideQuestion === undefined) setQuestion("");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
+  };
+
+  const submitDelete = async (): Promise<void> => {
+    if (!workspaceId || !confirmDelete) return;
+    setBusy(true);
+    try {
+      await api.deleteTurn(workspaceId, confirmDelete.id);
+      setHistory((prev) => prev.filter((t) => t.id !== confirmDelete.id));
+      setConfirmDelete(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const regenerate = async (turn: TurnView): Promise<void> => {
+    await ask(turn.question);
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -52,6 +113,9 @@ export function ChatView(): JSX.Element {
       void ask();
     }
   };
+
+  const lastAnswer = history.length > 0 ? history[history.length - 1] ?? null : null;
+  const lastChunks = lastAnswer?.chunks ?? [];
 
   if (!workspaceId)
     return (
@@ -62,7 +126,7 @@ export function ChatView(): JSX.Element {
 
   return (
     <section className="page" style={{ maxWidth: 1280 }}>
-      <PageHeader eyebrow="Chat" title="Ask the corpus." sub="실험을 선택해 그 실험의 인덱스로 질문하세요." />
+      <PageHeader eyebrow="Chat" title="Ask the corpus." sub="실험을 선택해 그 실험의 인덱스로 질문하세요. 대화는 자동 저장됩니다." />
 
       <div
         style={{
@@ -80,6 +144,31 @@ export function ChatView(): JSX.Element {
         />
 
         <div className="col gap-16">
+          {error && (
+            <div
+              className="card"
+              style={{ padding: "10px 14px", borderColor: "var(--error)", color: "var(--error)" }}
+            >
+              <span className="t-12 t-mono">{error}</span>
+            </div>
+          )}
+
+          {history.length > 0 && (
+            <div className="col gap-12">
+              {history.map((t) => (
+                <TurnCard
+                  key={t.id}
+                  turn={t}
+                  onDelete={() => setConfirmDelete(t)}
+                  onRegenerate={() => regenerate(t)}
+                  regenerating={loading}
+                  activeChunk={activeChunk}
+                  setActiveChunk={setActiveChunk}
+                />
+              ))}
+            </div>
+          )}
+
           <div className="card col gap-12" style={{ padding: 16 }}>
             <textarea
               className="input"
@@ -91,46 +180,55 @@ export function ChatView(): JSX.Element {
             />
             <div className="row f-between f-center">
               <span className="t-12 t-meta">
-                {response?.mode === "retrieval_only" ? (
-                  <RetrievalOnlyBadge />
-                ) : (
-                  <>local generation</>
-                )}
+                {lastAnswer?.answer === null ? <RetrievalOnlyBadge /> : <>local generation</>}
               </span>
               <button
                 className="btn btn-primary btn-sm"
-                onClick={ask}
+                onClick={() => ask()}
                 disabled={loading || !selected || !question.trim()}
               >
                 {loading ? "Asking…" : "Ask"}
               </button>
             </div>
           </div>
-
-          {error && (
-            <div
-              className="card"
-              style={{ padding: "10px 14px", borderColor: "var(--error)", color: "var(--error)" }}
-            >
-              <span className="t-12 t-mono">{error}</span>
-            </div>
-          )}
-
-          {response && (
-            <AnswerCard
-              response={response}
-              activeChunk={activeChunk}
-              setActiveChunk={setActiveChunk}
-            />
-          )}
         </div>
 
         <RetrievalRail
-          response={response}
+          chunks={lastChunks}
           activeChunk={activeChunk}
           setActiveChunk={setActiveChunk}
         />
       </div>
+
+      {confirmDelete && (
+        <Modal
+          title="Delete turn"
+          onClose={() => {
+            if (!busy) setConfirmDelete(null);
+          }}
+          footer={
+            <>
+              <button
+                className="btn"
+                onClick={() => setConfirmDelete(null)}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn"
+                onClick={submitDelete}
+                disabled={busy}
+                style={{ borderColor: "var(--error)", color: "var(--error)" }}
+              >
+                Delete
+              </button>
+            </>
+          }
+        >
+          <p className="t-14">이 턴을 삭제합니다. 같은 질문을 다시 보내고 싶다면 regenerate 버튼을 사용하세요.</p>
+        </Modal>
+      )}
     </section>
   );
 }
@@ -187,47 +285,92 @@ function ExperimentRail({
   );
 }
 
-function AnswerCard({
-  response,
+function TurnCard({
+  turn,
+  onDelete,
+  onRegenerate,
+  regenerating,
   activeChunk,
   setActiveChunk,
 }: {
-  response: ChatResponse;
+  turn: TurnView;
+  onDelete: () => void;
+  onRegenerate: () => void;
+  regenerating: boolean;
   activeChunk: string | null;
   setActiveChunk: (id: string | null) => void;
 }): JSX.Element {
-  const isRetrievalOnly = response.mode === "retrieval_only";
+  const isRetrievalOnly = turn.answer === null;
   return (
     <article className="card col gap-12" style={{ padding: 20 }}>
+      <div className="row f-between f-center">
+        <span className="t-label">Question</span>
+        <div className="row gap-4">
+          <button
+            className="btn-ghost"
+            onClick={onRegenerate}
+            disabled={regenerating}
+            title="Re-run with the same question"
+            style={{
+              border: 0,
+              background: "transparent",
+              cursor: "pointer",
+              padding: 4,
+              color: "var(--text-2)",
+            }}
+            aria-label="regenerate"
+          >
+            <Icon name="play" size={11} />
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={onDelete}
+            title="Delete this turn"
+            style={{
+              border: 0,
+              background: "transparent",
+              cursor: "pointer",
+              padding: 4,
+              color: "var(--text-2)",
+            }}
+            aria-label="delete"
+          >
+            <Icon name="trash" size={11} />
+          </button>
+        </div>
+      </div>
+      <p className="t-14" style={{ margin: 0, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+        {turn.question}
+      </p>
+
       {isRetrievalOnly ? (
-        <div className="row gap-12 f-center">
-          <RetrievalOnlyBadge size="lg" />
+        <div className="row gap-12 f-center" style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+          <RetrievalOnlyBadge />
           <span className="t-13 t-dim">
-            LLM이 설정되지 않아 답변 생성은 생략됩니다. 검색된 청크만 표시됩니다.
+            LLM이 설정되지 않아 답변 생성은 생략되었습니다. 검색된 청크는 아래 패널에서 확인하세요.
           </span>
         </div>
-      ) : response.answer ? (
-        <p className="t-14" style={{ margin: 0, lineHeight: 1.65, whiteSpace: "pre-wrap" }}>
-          {response.answer}
-        </p>
       ) : (
-        <p className="t-meta t-13">No answer.</p>
+        <div className="col gap-8" style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+          <span className="t-label">Answer</span>
+          <p className="t-14" style={{ margin: 0, lineHeight: 1.65, whiteSpace: "pre-wrap" }}>
+            {turn.answer}
+          </p>
+        </div>
       )}
 
       <div className="row f-between f-center" style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
         <span className="t-12 t-meta t-mono">
-          turn {response.turn_id.slice(0, 10)} · {response.retrieval.latency_ms} ms
+          turn {turn.id.slice(0, 12)} · {turn.latency_ms ?? 0} ms
         </span>
-        <span className="t-12 t-meta">
-          {response.retrieval.chunks.length} chunks retrieved
-        </span>
+        <span className="t-12 t-meta">{turn.chunks.length} chunks</span>
       </div>
 
-      {!isRetrievalOnly && response.retrieval.chunks.length > 0 && (
+      {!isRetrievalOnly && turn.chunks.length > 0 && (
         <div className="col gap-6">
           <span className="t-label">Citations</span>
           <div className="row gap-6 f-wrap">
-            {response.retrieval.chunks.map((c) => (
+            {turn.chunks.map((c) => (
               <button
                 key={c.chunk_id}
                 onClick={() => setActiveChunk(activeChunk === c.chunk_id ? null : c.chunk_id)}
@@ -249,11 +392,11 @@ function AnswerCard({
 }
 
 function RetrievalRail({
-  response,
+  chunks,
   activeChunk,
   setActiveChunk,
 }: {
-  response: ChatResponse | null;
+  chunks: ChatChunk[];
   activeChunk: string | null;
   setActiveChunk: (id: string | null) => void;
 }): JSX.Element {
@@ -271,12 +414,12 @@ function RetrievalRail({
         <Icon name="search" size={12} color="var(--text-2)" />
         <span className="t-label">Retrieved chunks</span>
       </div>
-      {!response || response.retrieval.chunks.length === 0 ? (
+      {chunks.length === 0 ? (
         <p className="t-12 t-meta" style={{ padding: 16 }}>
           질문을 보내면 여기에 검색된 청크가 표시됩니다.
         </p>
       ) : (
-        response.retrieval.chunks.map((c) => {
+        chunks.map((c) => {
           const active = c.chunk_id === activeChunk;
           return (
             <button

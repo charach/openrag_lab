@@ -22,6 +22,7 @@ ExperimentId = NewType("ExperimentId", str)
 GoldenSetId = NewType("GoldenSetId", str)
 GoldenPairId = NewType("GoldenPairId", str)
 TaskId = NewType("TaskId", str)
+ChatTurnId = NewType("ChatTurnId", str)
 
 
 _WORKSPACE_PREFIX = "ws"
@@ -31,6 +32,7 @@ _EXPERIMENT_PREFIX = "exp"
 _GOLDEN_SET_PREFIX = "gs"
 _GOLDEN_PAIR_PREFIX = "gp"
 _TASK_PREFIX = "task"
+_CHAT_TURN_PREFIX = "turn"
 
 
 def _new(prefix: str, *, hex_chars: int = 12) -> str:
@@ -64,3 +66,7 @@ def new_golden_pair_id() -> GoldenPairId:
 
 def new_task_id() -> TaskId:
     return TaskId(_new(_TASK_PREFIX))
+
+
+def new_chat_turn_id() -> ChatTurnId:
+    return ChatTurnId(_new(_CHAT_TURN_PREFIX))

@@ -26,6 +26,7 @@ EXPECTED_TABLES = frozenset(
         "golden_set",
         "golden_pair",
         "indexing_checkpoint",
+        "chat_turn",
     }
 )
 
@@ -59,8 +60,8 @@ def test_apply_migrations_is_idempotent(tmp_path: Path) -> None:
 
     # And re-opening from disk does not append a duplicate version row.
     with open_db(db_path) as conn:
-        rows = conn.execute("SELECT version FROM schema_version").fetchall()
-    assert [r["version"] for r in rows] == [CURRENT_SCHEMA_VERSION]
+        rows = conn.execute("SELECT version FROM schema_version ORDER BY version").fetchall()
+    assert [r["version"] for r in rows] == list(range(1, CURRENT_SCHEMA_VERSION + 1))
 
 
 def test_workspace_insert_and_lookup_round_trip(tmp_path: Path) -> None:

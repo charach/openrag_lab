@@ -88,6 +88,57 @@ def test_chat_with_llm_returns_answer(app_state: AppState) -> None:
     assert body["answer"].startswith("echo[")
 
 
+def test_chat_persists_turn_and_lists_history(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        _upload(client, ws, ("a.txt", "alpha beta gamma. " * 30))
+        exp_id = _index_and_wait(client, ws, app_state, _index_body(llm_id=None))
+
+        first = client.post(
+            f"/workspaces/{ws}/chat",
+            json={"experiment_id": exp_id, "question": "Q1"},
+        ).json()
+        second = client.post(
+            f"/workspaces/{ws}/chat",
+            json={"experiment_id": exp_id, "question": "Q2"},
+        ).json()
+
+        history = client.get(
+            f"/workspaces/{ws}/experiments/{exp_id}/turns"
+        ).json()
+    assert {t["id"] for t in history["items"]} == {first["turn_id"], second["turn_id"]}
+    questions = {t["question"] for t in history["items"]}
+    assert questions == {"Q1", "Q2"}
+
+
+def test_delete_turn_removes_from_history(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        _upload(client, ws, ("a.txt", "alpha. " * 30))
+        exp_id = _index_and_wait(client, ws, app_state, _index_body(llm_id=None))
+
+        first = client.post(
+            f"/workspaces/{ws}/chat",
+            json={"experiment_id": exp_id, "question": "Q1"},
+        ).json()
+
+        resp = client.delete(f"/workspaces/{ws}/turns/{first['turn_id']}")
+        assert resp.status_code == 204
+
+        history = client.get(
+            f"/workspaces/{ws}/experiments/{exp_id}/turns"
+        ).json()
+    assert history["items"] == []
+
+
+def test_delete_unknown_turn_returns_404(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        resp = client.delete(f"/workspaces/{ws}/turns/turn_nope")
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "CHAT_TURN_NOT_FOUND"
+
+
 def test_chat_unknown_experiment_returns_404(app_state: AppState) -> None:
     with TestClient(create_app(state=app_state)) as client:
         ws = _create_ws(client)

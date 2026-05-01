@@ -161,6 +161,18 @@ export interface ChatResponse {
   external_calls: string[];
 }
 
+export interface ChatTurnRecord {
+  id: string;
+  experiment_id: string;
+  question: string;
+  answer: string | null;
+  citations: unknown[];
+  chunks: ChatChunk[];
+  latency_ms: number | null;
+  tokens: number | null;
+  created_at: string;
+}
+
 export interface ExperimentSummary {
   id: string;
   config_fingerprint: string;
@@ -287,6 +299,20 @@ export const api = {
     payload: { experiment_id: string; question: string; stream?: boolean },
   ): Promise<ChatResponse> =>
     request(`/workspaces/${workspaceId}/chat`, { method: "POST", json: payload }),
+
+  listTurns: (
+    workspaceId: string,
+    experimentId: string,
+    cursor?: string,
+  ): Promise<{ items: ChatTurnRecord[]; next_cursor: string | null }> => {
+    const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+    return request(
+      `/workspaces/${workspaceId}/experiments/${experimentId}/turns${qs}`,
+    );
+  },
+
+  deleteTurn: (workspaceId: string, turnId: string): Promise<void> =>
+    request(`/workspaces/${workspaceId}/turns/${turnId}`, { method: "DELETE" }),
 
   listExperiments: (
     workspaceId: string,
