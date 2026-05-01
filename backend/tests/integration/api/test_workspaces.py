@@ -90,6 +90,36 @@ def test_create_validates_name_length(app_state: AppState) -> None:
     assert resp.json()["error"]["code"] == "BAD_REQUEST_FIELD"
 
 
+def test_rename_updates_name(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        created = client.post("/workspaces", json={"name": "before"}).json()
+        ws_id = created["id"]
+        resp = client.patch(f"/workspaces/{ws_id}", json={"name": "after"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == ws_id
+    assert body["name"] == "after"
+
+    with TestClient(create_app(state=app_state)) as client:
+        again = client.get(f"/workspaces/{ws_id}").json()
+    assert again["name"] == "after"
+
+
+def test_rename_unknown_returns_404(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        resp = client.patch("/workspaces/ws_nope", json={"name": "x"})
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "WORKSPACE_NOT_FOUND"
+
+
+def test_rename_validates_name(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        created = client.post("/workspaces", json={"name": "before"}).json()
+        resp = client.patch(f"/workspaces/{created['id']}", json={"name": ""})
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "BAD_REQUEST_FIELD"
+
+
 def test_listing_orders_newest_first(app_state: AppState) -> None:
     with TestClient(create_app(state=app_state)) as client:
         first = client.post("/workspaces", json={"name": "older"}).json()

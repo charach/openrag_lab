@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, type SystemProfileResponse, type WorkspaceSummary } from "../api/client";
 import { useWorkspaceStore } from "../stores/workspace";
-import { Icon } from "./ui";
+import { Icon, Modal } from "./ui";
 
 const NAV: Array<{ path: string; label: string; icon: Parameters<typeof Icon>[0]["name"] }> = [
   { path: "/", label: "Auto-Pilot", icon: "wand" },
@@ -27,23 +27,37 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [wsOpen, setWsOpen] = useState(false);
   const [hwOpen, setHwOpen] = useState(false);
+  const [modal, setModal] = useState<
+    | { kind: "create" }
+    | { kind: "rename"; ws: WorkspaceSummary }
+    | { kind: "delete"; ws: WorkspaceSummary }
+    | null
+  >(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState("");
   const wsRef = useRef<HTMLDivElement>(null);
   const hwRef = useRef<HTMLDivElement>(null);
+
+  const refreshWorkspaces = async (): Promise<WorkspaceSummary[]> => {
+    const r = await api.listWorkspaces();
+    setWorkspaces(r.items);
+    return r.items;
+  };
 
   useEffect(() => {
     api
       .systemProfile()
       .then(setProfile)
       .catch(() => undefined);
-    api
-      .listWorkspaces()
-      .then((r) => {
-        setWorkspaces(r.items);
-        const first = r.items[0];
+    refreshWorkspaces()
+      .then((items) => {
+        const first = items[0];
         if (!activeId && first) setActive(first.id);
       })
       .catch(() => undefined);
-  }, [activeId, setActive]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Close popovers on outside click.
   useEffect(() => {
@@ -57,6 +71,56 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
   }, []);
 
   const ws = workspaces.find((w) => w.id === activeId) ?? workspaces[0];
+
+  const submitCreate = async (): Promise<void> => {
+    setPending(true);
+    setError(null);
+    try {
+      const created = await api.createWorkspace(draftName);
+      const items = await refreshWorkspaces();
+      setActive(items.find((w) => w.id === created.id)?.id ?? created.id);
+      setModal(null);
+      setDraftName("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const submitRename = async (): Promise<void> => {
+    if (modal?.kind !== "rename") return;
+    setPending(true);
+    setError(null);
+    try {
+      await api.renameWorkspace(modal.ws.id, draftName);
+      await refreshWorkspaces();
+      setModal(null);
+      setDraftName("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const submitDelete = async (): Promise<void> => {
+    if (modal?.kind !== "delete") return;
+    setPending(true);
+    setError(null);
+    try {
+      await api.deleteWorkspace(modal.ws.id);
+      const items = await refreshWorkspaces();
+      if (modal.ws.id === activeId) {
+        setActive(items[0]?.id ?? null);
+      }
+      setModal(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setPending(false);
+    }
+  };
   const hwSummary = profile
     ? `${profile.os.platform === "darwin" ? "macOS" : profile.os.platform} · ${profile.cpu.cores}C · ${profile.ram.total_gb} GB · ${profile.gpu.acceleration_backend}`
     : "…";
@@ -126,7 +190,7 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
             )}
             <Icon name="down" size={12} color="var(--text-2)" />
           </button>
-          {wsOpen && workspaces.length > 0 && (
+          {wsOpen && (
             <div
               style={{
                 position: "absolute",
@@ -139,34 +203,87 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
               }}
             >
               {workspaces.map((w) => (
-                <button
+                <div
                   key={w.id}
-                  onClick={() => {
-                    setActive(w.id);
-                    setWsOpen(false);
-                  }}
+                  className="row f-center"
                   style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "10px 14px",
-                    border: 0,
                     borderBottom: "1px solid var(--border)",
                     background: w.id === ws?.id ? "var(--bg-2)" : "transparent",
-                    color: "var(--text-0)",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 2,
                   }}
                 >
-                  <span className="t-13">{w.name}</span>
-                  <span className="t-meta t-mono t-12">
-                    {w.stats.document_count} docs · {w.stats.chunk_count.toLocaleString()} chunks ·{" "}
-                    {w.stats.experiment_count} exp
-                  </span>
-                </button>
+                  <button
+                    onClick={() => {
+                      setActive(w.id);
+                      setWsOpen(false);
+                    }}
+                    style={{
+                      flex: 1,
+                      textAlign: "left",
+                      padding: "10px 14px",
+                      border: 0,
+                      background: "transparent",
+                      color: "var(--text-0)",
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 2,
+                    }}
+                  >
+                    <span className="t-13">{w.name}</span>
+                    <span className="t-meta t-mono t-12">
+                      {w.stats.document_count} docs · {w.stats.chunk_count.toLocaleString()} chunks ·{" "}
+                      {w.stats.experiment_count} exp
+                    </span>
+                  </button>
+                  <button
+                    aria-label={`rename ${w.name}`}
+                    onClick={() => {
+                      setDraftName(w.name);
+                      setModal({ kind: "rename", ws: w });
+                      setWsOpen(false);
+                    }}
+                    className="btn-ghost"
+                    style={{ border: 0, background: "transparent", padding: 8, cursor: "pointer" }}
+                  >
+                    <Icon name="settings" size={12} color="var(--text-2)" />
+                  </button>
+                  <button
+                    aria-label={`delete ${w.name}`}
+                    onClick={() => {
+                      setModal({ kind: "delete", ws: w });
+                      setWsOpen(false);
+                    }}
+                    className="btn-ghost"
+                    style={{ border: 0, background: "transparent", padding: 8, cursor: "pointer" }}
+                  >
+                    <Icon name="trash" size={12} color="var(--text-2)" />
+                  </button>
+                </div>
               ))}
+              <button
+                onClick={() => {
+                  setDraftName("");
+                  setModal({ kind: "create" });
+                  setWsOpen(false);
+                }}
+                style={{
+                  width: "100%",
+                  padding: "12px 14px",
+                  border: 0,
+                  background: "transparent",
+                  color: "var(--accent)",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  textAlign: "left",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+                className="t-13"
+              >
+                + New workspace
+              </button>
             </div>
           )}
         </div>
@@ -280,6 +397,121 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
       <div className="fade-in" key={pathname}>
         {children}
       </div>
+      {modal?.kind === "create" && (
+        <Modal
+          title="New workspace"
+          onClose={() => {
+            if (!pending) setModal(null);
+          }}
+          footer={
+            <>
+              <button className="btn" onClick={() => setModal(null)} disabled={pending}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={submitCreate}
+                disabled={pending || draftName.trim().length === 0}
+              >
+                Create
+              </button>
+            </>
+          }
+        >
+          <label className="t-label" style={{ display: "block", marginBottom: 8 }}>
+            Name
+          </label>
+          <input
+            className="input"
+            autoFocus
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitCreate();
+            }}
+          />
+          {error && (
+            <p style={{ color: "var(--error)", marginTop: 8 }} className="t-12">
+              {error}
+            </p>
+          )}
+        </Modal>
+      )}
+      {modal?.kind === "rename" && (
+        <Modal
+          title="Rename workspace"
+          onClose={() => {
+            if (!pending) setModal(null);
+          }}
+          footer={
+            <>
+              <button className="btn" onClick={() => setModal(null)} disabled={pending}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={submitRename}
+                disabled={
+                  pending || draftName.trim().length === 0 || draftName === modal.ws.name
+                }
+              >
+                Save
+              </button>
+            </>
+          }
+        >
+          <label className="t-label" style={{ display: "block", marginBottom: 8 }}>
+            New name
+          </label>
+          <input
+            className="input"
+            autoFocus
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitRename();
+            }}
+          />
+          {error && (
+            <p style={{ color: "var(--error)", marginTop: 8 }} className="t-12">
+              {error}
+            </p>
+          )}
+        </Modal>
+      )}
+      {modal?.kind === "delete" && (
+        <Modal
+          title="Delete workspace"
+          onClose={() => {
+            if (!pending) setModal(null);
+          }}
+          footer={
+            <>
+              <button className="btn" onClick={() => setModal(null)} disabled={pending}>
+                Cancel
+              </button>
+              <button
+                className="btn"
+                onClick={submitDelete}
+                disabled={pending}
+                style={{ borderColor: "var(--error)", color: "var(--error)" }}
+              >
+                Delete
+              </button>
+            </>
+          }
+        >
+          <p className="t-14">
+            Delete <strong>{modal.ws.name}</strong>? This removes all documents,
+            chunks, and experiments under it. This cannot be undone.
+          </p>
+          {error && (
+            <p style={{ color: "var(--error)", marginTop: 8 }} className="t-12">
+              {error}
+            </p>
+          )}
+        </Modal>
+      )}
     </>
   );
 }

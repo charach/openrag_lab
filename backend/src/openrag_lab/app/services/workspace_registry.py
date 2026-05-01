@@ -131,6 +131,26 @@ class WorkspaceRegistry:
         finally:
             conn.close()
 
+    def rename(self, workspace_id: WorkspaceId, new_name: str) -> Workspace | None:
+        """Update a workspace's display name. Returns the updated row, or None
+        if the workspace does not exist. Validation (length etc.) lives on
+        :class:`WorkspaceMeta`; we surface ``ValueError`` as-is to the caller.
+        """
+        paths = self.paths_for(workspace_id)
+        if not paths.db.exists():
+            return None
+        conn = connect(paths.db)
+        try:
+            repo = WorkspaceRepository(conn)
+            current = repo.get(workspace_id)
+            if current is None:
+                return None
+            new_meta = current.meta.model_copy(update={"name": new_name})
+            repo.update_meta(workspace_id, new_meta)
+            return current.model_copy(update={"meta": new_meta})
+        finally:
+            conn.close()
+
     def delete(self, workspace_id: WorkspaceId) -> bool:
         """Remove the workspace directory recursively. Returns True if found."""
         wsdir = self._layout.workspace_dir(str(workspace_id))

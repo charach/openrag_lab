@@ -345,6 +345,87 @@ export function Step({ number, title, subtitle, status, children }: StepProps): 
   );
 }
 
+interface ModalProps {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+  footer?: ReactNode;
+  width?: number;
+}
+
+export function Modal({ title, children, onClose, footer, width = 480 }: ModalProps): JSX.Element {
+  return (
+    <div
+      role="dialog"
+      aria-label={title}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.55)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+      }}
+    >
+      <div
+        className="card"
+        style={{
+          width,
+          maxWidth: "90vw",
+          maxHeight: "85vh",
+          display: "flex",
+          flexDirection: "column",
+          background: "var(--bg-1)",
+          border: "1px solid var(--border-strong)",
+        }}
+      >
+        <div
+          className="row f-between f-center"
+          style={{
+            padding: "14px 18px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <span className="t-13" style={{ color: "var(--text-0)" }}>
+            {title}
+          </span>
+          <button
+            onClick={onClose}
+            aria-label="close"
+            className="btn-ghost"
+            style={{
+              border: 0,
+              background: "transparent",
+              color: "var(--text-1)",
+              cursor: "pointer",
+              padding: 4,
+            }}
+          >
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+        <div style={{ padding: 18, overflow: "auto", flex: 1 }}>{children}</div>
+        {footer && (
+          <div
+            className="row gap-8"
+            style={{
+              justifyContent: "flex-end",
+              padding: "12px 18px",
+              borderTop: "1px solid var(--border)",
+            }}
+          >
+            {footer}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function Eyebrow({
   children,
   style,

@@ -29,6 +29,10 @@ class CreateWorkspaceBody(BaseModel):
     preset_id: str | None = None
 
 
+class RenameWorkspaceBody(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
 def _registry(state: AppState) -> WorkspaceRegistry:
     return WorkspaceRegistry(state.layout)
 
@@ -141,6 +145,27 @@ async def get_workspace(
     workspace = _require_workspace(registry, ws_id)
     stats = registry.stats(ws_id)
     return _serialize_detail(workspace, stats)
+
+
+@router.patch("/{workspace_id}")
+async def rename_workspace(
+    workspace_id: str,
+    body: RenameWorkspaceBody,
+    state: Annotated[AppState, Depends(get_state)],
+) -> dict[str, Any]:
+    registry = _registry(state)
+    ws_id = WorkspaceId(workspace_id)
+    _require_workspace(registry, ws_id)
+    updated = registry.rename(ws_id, body.name)
+    if updated is None:
+        raise HttpError(
+            status_code=404,
+            code="WORKSPACE_NOT_FOUND",
+            message="워크스페이스를 찾을 수 없습니다.",
+            recoverable=False,
+            details={"workspace_id": str(ws_id)},
+        )
+    return _serialize_detail(updated, registry.stats(ws_id))
 
 
 @router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)

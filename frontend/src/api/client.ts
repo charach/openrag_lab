@@ -178,6 +178,11 @@ export const api = {
     preset_id?: string,
   ): Promise<WorkspaceSummary & { config: unknown }> =>
     request("/workspaces", { method: "POST", json: { name, preset_id } }),
+  renameWorkspace: (
+    id: string,
+    name: string,
+  ): Promise<WorkspaceSummary & { config: unknown }> =>
+    request(`/workspaces/${id}`, { method: "PATCH", json: { name } }),
   deleteWorkspace: (id: string): Promise<void> =>
     request(`/workspaces/${id}`, { method: "DELETE" }),
 
