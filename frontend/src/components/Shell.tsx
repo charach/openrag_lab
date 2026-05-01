@@ -9,6 +9,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { api, type SystemProfileResponse, type WorkspaceSummary } from "../api/client";
 import { useThemeStore } from "../stores/theme";
 import { useWorkspaceStore } from "../stores/workspace";
+import { ConfigPortModal } from "./ConfigPortModal";
 import { Icon, Modal } from "./ui";
 
 const NAV: Array<{ path: string; label: string; icon: Parameters<typeof Icon>[0]["name"] }> = [
@@ -37,6 +38,7 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
     | { kind: "delete"; ws: WorkspaceSummary }
     | null
   >(null);
+  const [configOpen, setConfigOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
@@ -341,6 +343,24 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
             position: "relative",
           }}
         >
+          {ws && (
+            <button
+              aria-label="config export/import"
+              title="Workspace config — export / import"
+              onClick={() => setConfigOpen(true)}
+              style={{
+                border: 0,
+                background: "transparent",
+                color: "var(--text-1)",
+                cursor: "pointer",
+                padding: 4,
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <Icon name="yaml" size={14} />
+            </button>
+          )}
           <button
             aria-label={`switch to ${theme === "noir" ? "light" : "dark"} theme`}
             title={`Theme: ${theme === "noir" ? "noir (dark)" : "pearl (light)"}`}
@@ -498,6 +518,15 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
             </p>
           )}
         </Modal>
+      )}
+      {configOpen && ws && (
+        <ConfigPortModal
+          workspaceId={ws.id}
+          onClose={() => setConfigOpen(false)}
+          onImported={() => {
+            void refreshWorkspaces();
+          }}
+        />
       )}
       {modal?.kind === "delete" && (
         <Modal
