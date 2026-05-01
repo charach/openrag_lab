@@ -175,6 +175,21 @@ export interface ExperimentSummary {
   };
 }
 
+export interface ExperimentDetail extends ExperimentSummary {
+  config: {
+    embedder_id: string;
+    chunking: { strategy: string; chunk_size: number; chunk_overlap: number };
+    retrieval_strategy: string;
+    top_k: number;
+    llm_id: string | null;
+  };
+  profile: {
+    total_latency_ms: number;
+    stages: Record<string, number>;
+  };
+  pair_results: unknown[];
+}
+
 export const api = {
   systemProfile: (): Promise<SystemProfileResponse> => request("/system/profile"),
   systemPresets: (): Promise<PresetResponse> => request("/system/presets"),
@@ -277,4 +292,7 @@ export const api = {
     workspaceId: string,
   ): Promise<{ items: ExperimentSummary[]; next_cursor: null }> =>
     request(`/workspaces/${workspaceId}/experiments`),
+
+  getExperiment: (workspaceId: string, experimentId: string): Promise<ExperimentDetail> =>
+    request(`/workspaces/${workspaceId}/experiments/${experimentId}`),
 };

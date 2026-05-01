@@ -15,9 +15,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api, type ExperimentSummary } from "../api/client";
+import { api, type ExperimentDetail, type ExperimentSummary } from "../api/client";
 import { useWorkspaceStore } from "../stores/workspace";
-import { PageHeader, ScoreCell } from "../components/ui";
+import { Drawer, PageHeader, ScoreCell } from "../components/ui";
 
 const METRICS = [
   "faithfulness",
@@ -34,6 +34,24 @@ export function ExperimentMatrix(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("started_at");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [openExp, setOpenExp] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ExperimentDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!workspaceId || !openExp) {
+      setDetail(null);
+      return;
+    }
+    setDetailLoading(true);
+    setDetailError(null);
+    api
+      .getExperiment(workspaceId, openExp)
+      .then(setDetail)
+      .catch((e) => setDetailError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setDetailLoading(false));
+  }, [workspaceId, openExp]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -140,7 +158,12 @@ export function ExperimentMatrix(): JSX.Element {
               sorted.map((e) => (
                 <tr
                   key={e.id}
-                  style={{ borderBottom: "1px solid var(--border)" }}
+                  onClick={() => setOpenExp(e.id)}
+                  style={{
+                    borderBottom: "1px solid var(--border)",
+                    cursor: "pointer",
+                    background: openExp === e.id ? "var(--bg-2)" : undefined,
+                  }}
                 >
                   <Td>
                     <span className="t-13">{e.id.slice(0, 14)}</span>
@@ -172,6 +195,21 @@ export function ExperimentMatrix(): JSX.Element {
           </tbody>
         </table>
       </div>
+
+      {openExp && (
+        <Drawer
+          title={`Experiment ${openExp.slice(0, 14)}`}
+          onClose={() => setOpenExp(null)}
+        >
+          {detailLoading && <p className="t-meta t-13">Loading…</p>}
+          {detailError && (
+            <p style={{ color: "var(--error)" }} className="t-12">
+              {detailError}
+            </p>
+          )}
+          {detail && <DetailBody detail={detail} />}
+        </Drawer>
+      )}
 
       {sorted.length > 0 && (
         <div className="card" style={{ marginTop: 24, padding: 20 }}>
@@ -223,6 +261,113 @@ export function ExperimentMatrix(): JSX.Element {
         </div>
       )}
     </section>
+  );
+}
+
+function DetailBody({ detail }: { detail: ExperimentDetail }): JSX.Element {
+  return (
+    <div className="col gap-20">
+      <div className="col gap-8">
+        <span className="t-label">Status</span>
+        <span className="chip" style={{ color: statusColor(detail.status) }}>
+          <span className="dot" style={{ background: statusColor(detail.status) }}></span>
+          {detail.status}
+        </span>
+      </div>
+      <div className="col gap-8">
+        <span className="t-label">Fingerprint</span>
+        <span className="t-mono t-12 t-meta" style={{ wordBreak: "break-all" }}>
+          {detail.config_fingerprint}
+        </span>
+      </div>
+      <div className="col gap-8">
+        <span className="t-label">Config</span>
+        <div
+          className="t-mono t-12"
+          style={{
+            padding: 12,
+            background: "var(--bg-2)",
+            border: "1px solid var(--border)",
+            color: "var(--text-1)",
+            display: "grid",
+            gridTemplateColumns: "auto 1fr",
+            columnGap: 16,
+            rowGap: 4,
+          }}
+        >
+          <span className="t-meta">embedder</span>
+          <span>{detail.config.embedder_id}</span>
+          <span className="t-meta">retrieval</span>
+          <span>{detail.config.retrieval_strategy}</span>
+          <span className="t-meta">top_k</span>
+          <span>{detail.config.top_k}</span>
+          <span className="t-meta">llm</span>
+          <span>{detail.config.llm_id ?? "—"}</span>
+          <span className="t-meta">strategy</span>
+          <span>{detail.config.chunking.strategy}</span>
+          <span className="t-meta">chunk_size</span>
+          <span>{detail.config.chunking.chunk_size}</span>
+          <span className="t-meta">chunk_overlap</span>
+          <span>{detail.config.chunking.chunk_overlap}</span>
+        </div>
+      </div>
+      <div className="col gap-8">
+        <span className="t-label">Scores</span>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 8,
+          }}
+        >
+          {(
+            [
+              "faithfulness",
+              "answer_relevance",
+              "context_precision",
+              "context_recall",
+            ] as const
+          ).map((m) => (
+            <div
+              key={m}
+              className="card"
+              style={{
+                padding: "10px 12px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <span className="t-12 t-meta">{m}</span>
+              <ScoreCell value={detail.scores[m]} />
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="col gap-8">
+        <span className="t-label">Performance</span>
+        <div
+          className="t-mono t-12"
+          style={{
+            padding: 12,
+            background: "var(--bg-2)",
+            border: "1px solid var(--border)",
+            color: "var(--text-1)",
+          }}
+        >
+          <div className="row f-between">
+            <span className="t-meta">total_latency_ms</span>
+            <span>{detail.profile.total_latency_ms}</span>
+          </div>
+          {Object.entries(detail.profile.stages).map(([stage, ms]) => (
+            <div key={stage} className="row f-between">
+              <span className="t-meta">{stage}</span>
+              <span>{ms}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 

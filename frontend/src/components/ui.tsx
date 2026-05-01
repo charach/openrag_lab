@@ -363,6 +363,72 @@ export function Step({ number, title, subtitle, status, children }: StepProps): 
   );
 }
 
+interface DrawerProps {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+  width?: number;
+}
+
+export function Drawer({ title, children, onClose, width = 540 }: DrawerProps): JSX.Element {
+  return (
+    <div
+      role="dialog"
+      aria-label={title}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.45)",
+        display: "flex",
+        justifyContent: "flex-end",
+        zIndex: 1000,
+      }}
+    >
+      <div
+        style={{
+          width,
+          maxWidth: "90vw",
+          height: "100vh",
+          background: "var(--bg-1)",
+          borderLeft: "1px solid var(--border-strong)",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <div
+          className="row f-between f-center"
+          style={{
+            padding: "14px 20px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <span className="t-13" style={{ color: "var(--text-0)" }}>
+            {title}
+          </span>
+          <button
+            onClick={onClose}
+            aria-label="close"
+            className="btn-ghost"
+            style={{
+              border: 0,
+              background: "transparent",
+              color: "var(--text-1)",
+              cursor: "pointer",
+              padding: 4,
+            }}
+          >
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+        <div style={{ padding: 20, overflow: "auto", flex: 1 }}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
 interface ModalProps {
   title: string;
   children: ReactNode;
