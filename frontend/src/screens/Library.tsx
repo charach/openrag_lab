@@ -222,12 +222,6 @@ export function Library(): JSX.Element {
 
         <div className="row gap-12 f-center" style={{ flexWrap: "wrap" }}>
           <div style={{ position: "relative", flex: 1, minWidth: 240 }}>
-            <Icon
-              name="search"
-              size={12}
-              color="var(--text-2)"
-              // eslint-disable-next-line react/forbid-component-props
-            />
             <input
               className="input"
               placeholder="Search by filename"
@@ -235,7 +229,15 @@ export function Library(): JSX.Element {
               onChange={(e) => setQuery(e.target.value)}
               style={{ paddingLeft: 32 }}
             />
-            <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }}>
+            <span
+              style={{
+                position: "absolute",
+                left: 10,
+                top: "50%",
+                transform: "translateY(-50%)",
+                pointerEvents: "none",
+              }}
+            >
               <Icon name="search" size={12} color="var(--text-2)" />
             </span>
           </div>
