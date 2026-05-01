@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import csv
+import io
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from openrag_lab.app.dependencies import get_state
@@ -12,6 +15,7 @@ from openrag_lab.app.errors import HttpError
 from openrag_lab.app.services.workspace_registry import WorkspaceRegistry
 from openrag_lab.app.state import AppState
 from openrag_lab.domain.models.ids import (
+    GoldenPairId,
     GoldenSetId,
     WorkspaceId,
     new_golden_pair_id,
@@ -39,6 +43,12 @@ class PairBody(BaseModel):
 
 class AddPairsBody(BaseModel):
     pairs: list[PairBody] = Field(min_length=1)
+
+
+class UpdatePairBody(BaseModel):
+    question: str | None = Field(default=None, min_length=1)
+    expected_answer: str | None = None
+    expected_chunk_ids: list[str] | None = None
 
 
 def _registry(state: AppState) -> WorkspaceRegistry:
@@ -142,6 +152,141 @@ async def add_pairs(
             new_ids.append(str(pid))
         added = repo.add_pairs(set_id, pairs)
     return {"added": added, "skipped": 0, "ids": new_ids}
+
+
+@router.get("/workspaces/{workspace_id}/golden-sets/{gs_id}/pairs")
+async def list_pairs(
+    workspace_id: str,
+    gs_id: str,
+    state: Annotated[AppState, Depends(get_state)],
+) -> dict[str, Any]:
+    registry = _registry(state)
+    ws_id = WorkspaceId(workspace_id)
+    _require_workspace(registry, ws_id)
+    set_id = GoldenSetId(gs_id)
+    with registry.open(ws_id) as conn:
+        repo = GoldenSetRepository(conn)
+        _require_set(repo, set_id, ws_id)
+        pairs = repo.list_pairs(set_id)
+    items = [
+        {
+            "id": str(p.id),
+            "question": p.question,
+            "expected_answer": p.expected_answer,
+            "expected_chunk_ids": [str(c) for c in p.expected_chunk_ids],
+        }
+        for p in pairs
+    ]
+    return {"items": items}
+
+
+@router.patch("/workspaces/{workspace_id}/golden-sets/{gs_id}/pairs/{pair_id}")
+async def update_pair(
+    workspace_id: str,
+    gs_id: str,
+    pair_id: str,
+    body: UpdatePairBody,
+    state: Annotated[AppState, Depends(get_state)],
+) -> dict[str, Any]:
+    registry = _registry(state)
+    ws_id = WorkspaceId(workspace_id)
+    _require_workspace(registry, ws_id)
+    set_id = GoldenSetId(gs_id)
+    p_id = GoldenPairId(pair_id)
+    with registry.open(ws_id) as conn:
+        repo = GoldenSetRepository(conn)
+        _require_set(repo, set_id, ws_id)
+        if repo.pair_set_id(p_id) != set_id:
+            raise HttpError(
+                status_code=404,
+                code="GOLDEN_PAIR_NOT_FOUND",
+                message="페어를 찾을 수 없습니다.",
+                recoverable=False,
+                details={"pair_id": pair_id},
+            )
+        existing = repo.get_pair(p_id)
+        assert existing is not None
+        from openrag_lab.domain.models.ids import ChunkId
+
+        updated = existing.model_copy(
+            update={
+                "question": body.question if body.question is not None else existing.question,
+                "expected_answer": (
+                    body.expected_answer
+                    if body.expected_answer is not None
+                    else existing.expected_answer
+                ),
+                "expected_chunk_ids": (
+                    tuple(ChunkId(c) for c in body.expected_chunk_ids)
+                    if body.expected_chunk_ids is not None
+                    else existing.expected_chunk_ids
+                ),
+            }
+        )
+        repo.update_pair(updated)
+    return {
+        "id": str(updated.id),
+        "question": updated.question,
+        "expected_answer": updated.expected_answer,
+        "expected_chunk_ids": [str(c) for c in updated.expected_chunk_ids],
+    }
+
+
+@router.delete(
+    "/workspaces/{workspace_id}/golden-sets/{gs_id}/pairs/{pair_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_pair(
+    workspace_id: str,
+    gs_id: str,
+    pair_id: str,
+    state: Annotated[AppState, Depends(get_state)],
+) -> None:
+    registry = _registry(state)
+    ws_id = WorkspaceId(workspace_id)
+    _require_workspace(registry, ws_id)
+    set_id = GoldenSetId(gs_id)
+    p_id = GoldenPairId(pair_id)
+    with registry.open(ws_id) as conn:
+        repo = GoldenSetRepository(conn)
+        _require_set(repo, set_id, ws_id)
+        if repo.pair_set_id(p_id) != set_id:
+            raise HttpError(
+                status_code=404,
+                code="GOLDEN_PAIR_NOT_FOUND",
+                message="페어를 찾을 수 없습니다.",
+                recoverable=False,
+                details={"pair_id": pair_id},
+            )
+        repo.delete_pair(p_id)
+
+
+@router.get("/workspaces/{workspace_id}/golden-sets/{gs_id}/export")
+async def export_csv(
+    workspace_id: str,
+    gs_id: str,
+    state: Annotated[AppState, Depends(get_state)],
+) -> PlainTextResponse:
+    registry = _registry(state)
+    ws_id = WorkspaceId(workspace_id)
+    _require_workspace(registry, ws_id)
+    set_id = GoldenSetId(gs_id)
+    with registry.open(ws_id) as conn:
+        repo = GoldenSetRepository(conn)
+        _require_set(repo, set_id, ws_id)
+        pairs = repo.list_pairs(set_id)
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["question", "expected_answer"])
+    for p in pairs:
+        writer.writerow([p.question, p.expected_answer or ""])
+    return PlainTextResponse(
+        buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="golden-set-{gs_id}.csv"',
+        },
+    )
 
 
 @router.post(

@@ -9,6 +9,7 @@ import { AutoPilotWizard } from "./screens/AutoPilotWizard";
 import { ChatView } from "./screens/ChatView";
 import { ChunkingLab } from "./screens/ChunkingLab";
 import { ExperimentMatrix } from "./screens/ExperimentMatrix";
+import { GoldenSets } from "./screens/GoldenSets";
 import { Library } from "./screens/Library";
 
 export function App(): JSX.Element {
@@ -20,6 +21,7 @@ export function App(): JSX.Element {
         <Route path="/chunking" element={<ChunkingLab />} />
         <Route path="/chat" element={<ChatView />} />
         <Route path="/experiments" element={<ExperimentMatrix />} />
+        <Route path="/golden-sets" element={<GoldenSets />} />
       </Routes>
     </Shell>
   );

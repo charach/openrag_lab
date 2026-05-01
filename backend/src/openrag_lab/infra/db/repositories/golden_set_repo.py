@@ -130,3 +130,51 @@ class GoldenSetRepository:
         cur = self._conn.execute("DELETE FROM golden_set WHERE id = ?", (str(golden_set_id),))
         self._conn.commit()
         return cur.rowcount
+
+    def get_pair(self, pair_id: GoldenPairId) -> GoldenPair | None:
+        row = self._conn.execute(
+            """
+            SELECT id, question, expected_answer, expected_chunk_ids_json
+              FROM golden_pair WHERE id = ?
+            """,
+            (str(pair_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        return GoldenPair(
+            id=GoldenPairId(row["id"]),
+            question=row["question"],
+            expected_answer=row["expected_answer"],
+            expected_chunk_ids=tuple(
+                ChunkId(c) for c in json.loads(row["expected_chunk_ids_json"] or "[]")
+            ),
+        )
+
+    def pair_set_id(self, pair_id: GoldenPairId) -> GoldenSetId | None:
+        row = self._conn.execute(
+            "SELECT golden_set_id FROM golden_pair WHERE id = ?",
+            (str(pair_id),),
+        ).fetchone()
+        return GoldenSetId(row["golden_set_id"]) if row else None
+
+    def update_pair(self, pair: GoldenPair) -> int:
+        cur = self._conn.execute(
+            """
+            UPDATE golden_pair
+               SET question = ?, expected_answer = ?, expected_chunk_ids_json = ?
+             WHERE id = ?
+            """,
+            (
+                pair.question,
+                pair.expected_answer,
+                json.dumps([str(c) for c in pair.expected_chunk_ids]),
+                str(pair.id),
+            ),
+        )
+        self._conn.commit()
+        return cur.rowcount
+
+    def delete_pair(self, pair_id: GoldenPairId) -> int:
+        cur = self._conn.execute("DELETE FROM golden_pair WHERE id = ?", (str(pair_id),))
+        self._conn.commit()
+        return cur.rowcount

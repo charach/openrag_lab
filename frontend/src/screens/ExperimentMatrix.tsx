@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -103,6 +104,11 @@ export function ExperimentMatrix(): JSX.Element {
         eyebrow="Experiments"
         title="Compare runs side by side."
         sub="모든 실험의 구성 지문(fingerprint)과 RAGAS 점수를 한눈에 비교합니다."
+        right={
+          <Link to="/golden-sets" className="btn btn-sm">
+            Golden sets →
+          </Link>
+        }
       />
 
       {error && (

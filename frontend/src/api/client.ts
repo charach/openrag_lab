@@ -295,4 +295,63 @@ export const api = {
 
   getExperiment: (workspaceId: string, experimentId: string): Promise<ExperimentDetail> =>
     request(`/workspaces/${workspaceId}/experiments/${experimentId}`),
+
+  listGoldenSets: (
+    workspaceId: string,
+  ): Promise<{ items: Array<{ id: string; name: string; pair_count: number }> }> =>
+    request(`/workspaces/${workspaceId}/golden-sets`),
+
+  createGoldenSet: (
+    workspaceId: string,
+    name: string,
+  ): Promise<{ id: string; name: string; pair_count: number }> =>
+    request(`/workspaces/${workspaceId}/golden-sets`, {
+      method: "POST",
+      json: { name },
+    }),
+
+  listGoldenPairs: (
+    workspaceId: string,
+    setId: string,
+  ): Promise<{
+    items: Array<{
+      id: string;
+      question: string;
+      expected_answer: string | null;
+      expected_chunk_ids: string[];
+    }>;
+  }> => request(`/workspaces/${workspaceId}/golden-sets/${setId}/pairs`),
+
+  addGoldenPairs: (
+    workspaceId: string,
+    setId: string,
+    pairs: Array<{ question: string; expected_answer?: string | null }>,
+  ): Promise<{ added: number; ids: string[] }> =>
+    request(`/workspaces/${workspaceId}/golden-sets/${setId}/pairs`, {
+      method: "POST",
+      json: { pairs },
+    }),
+
+  updateGoldenPair: (
+    workspaceId: string,
+    setId: string,
+    pairId: string,
+    body: { question?: string; expected_answer?: string | null },
+  ): Promise<{ id: string; question: string; expected_answer: string | null }> =>
+    request(
+      `/workspaces/${workspaceId}/golden-sets/${setId}/pairs/${pairId}`,
+      { method: "PATCH", json: body },
+    ),
+
+  deleteGoldenPair: (
+    workspaceId: string,
+    setId: string,
+    pairId: string,
+  ): Promise<void> =>
+    request(`/workspaces/${workspaceId}/golden-sets/${setId}/pairs/${pairId}`, {
+      method: "DELETE",
+    }),
+
+  exportGoldenSetUrl: (workspaceId: string, setId: string): string =>
+    `${BASE}/workspaces/${workspaceId}/golden-sets/${setId}/export`,
 };
