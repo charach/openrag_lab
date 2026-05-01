@@ -7,7 +7,11 @@ import "./styles/tokens.css";
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("root element missing");
 
-document.documentElement.setAttribute("data-theme", "noir");
+const storedTheme = window.localStorage.getItem("openrag.theme");
+document.documentElement.setAttribute(
+  "data-theme",
+  storedTheme === "pearl" || storedTheme === "noir" ? storedTheme : "noir",
+);
 
 createRoot(rootEl).render(
   <StrictMode>

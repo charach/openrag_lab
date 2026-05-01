@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, type SystemProfileResponse, type WorkspaceSummary } from "../api/client";
+import { useThemeStore } from "../stores/theme";
 import { useWorkspaceStore } from "../stores/workspace";
 import { Icon, Modal } from "./ui";
 
@@ -22,6 +23,8 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
   const { pathname } = useLocation();
   const activeId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setActive = useWorkspaceStore((s) => s.setActiveWorkspace);
+  const theme = useThemeStore((s) => s.theme);
+  const toggleTheme = useThemeStore((s) => s.toggle);
 
   const [profile, setProfile] = useState<SystemProfileResponse | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
@@ -337,6 +340,22 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
             position: "relative",
           }}
         >
+          <button
+            aria-label={`switch to ${theme === "noir" ? "light" : "dark"} theme`}
+            title={`Theme: ${theme === "noir" ? "noir (dark)" : "pearl (light)"}`}
+            onClick={toggleTheme}
+            style={{
+              border: 0,
+              background: "transparent",
+              color: "var(--text-1)",
+              cursor: "pointer",
+              padding: 4,
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            <Icon name={theme === "noir" ? "moon" : "sun"} size={14} />
+          </button>
           <button
             onClick={() => setHwOpen((v) => !v)}
             style={{

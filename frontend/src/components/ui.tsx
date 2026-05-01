@@ -26,7 +26,9 @@ type IconName =
   | "yaml"
   | "settings"
   | "search"
-  | "ext";
+  | "ext"
+  | "sun"
+  | "moon";
 
 interface IconProps {
   name: IconName;
@@ -181,6 +183,22 @@ export function Icon({ name, size = 14, color = "currentColor" }: IconProps): JS
       return (
         <svg width={size} height={size} viewBox={v}>
           <path d="M11 3H13V5M13 3L8 8M9 3H4V12H13V7" {...stroke} />
+        </svg>
+      );
+    case "sun":
+      return (
+        <svg width={size} height={size} viewBox={v}>
+          <circle cx="8" cy="8" r="3" {...stroke} />
+          <path
+            d="M8 1V3M8 13V15M1 8H3M13 8H15M3 3L4.5 4.5M11.5 11.5L13 13M3 13L4.5 11.5M11.5 4.5L13 3"
+            {...stroke}
+          />
+        </svg>
+      );
+    case "moon":
+      return (
+        <svg width={size} height={size} viewBox={v}>
+          <path d="M13 9.5C12 12 9.5 13.5 7 13C4.5 12.5 3 10 3 7.5C3 5.5 4 3.5 6 2.5C5.5 5 6.5 7.5 8.5 8.5C10 9.2 11.5 9.5 13 9.5Z" {...stroke} />
         </svg>
       );
   }
