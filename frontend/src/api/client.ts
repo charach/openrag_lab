@@ -86,6 +86,14 @@ export interface PresetResponse {
   }>;
 }
 
+export interface WorkspaceConfig {
+  embedder_id: string | null;
+  chunking: { strategy: string | null; chunk_size: number | null; chunk_overlap: number | null };
+  retrieval_strategy: string;
+  top_k: number;
+  llm_id: string | null;
+}
+
 export interface WorkspaceSummary {
   id: string;
   name: string;
@@ -173,6 +181,8 @@ export const api = {
 
   listWorkspaces: (): Promise<{ items: WorkspaceSummary[]; next_cursor: null }> =>
     request("/workspaces"),
+  getWorkspace: (id: string): Promise<WorkspaceSummary & { config: WorkspaceConfig }> =>
+    request(`/workspaces/${id}`),
   createWorkspace: (
     name: string,
     preset_id?: string,

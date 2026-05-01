@@ -5,14 +5,24 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { api, type ChunkPreviewResponse, type DocumentItem } from "../api/client";
+import { useNavigate } from "react-router-dom";
+import {
+  api,
+  type ChunkPreviewResponse,
+  type DocumentItem,
+  type PresetResponse,
+  type WorkspaceConfig,
+} from "../api/client";
 import { useWorkspaceStore } from "../stores/workspace";
-import { Icon, PageHeader } from "../components/ui";
+import { Icon, Modal, PageHeader } from "../components/ui";
 
 type Strategy = "recursive" | "fixed";
 
+type PresetEntry = PresetResponse["presets"][number];
+
 export function ChunkingLab(): JSX.Element {
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const navigate = useNavigate();
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [docId, setDocId] = useState<string | null>(null);
   const [strategy, setStrategy] = useState<Strategy>("recursive");
@@ -21,6 +31,10 @@ export function ChunkingLab(): JSX.Element {
   const [preview, setPreview] = useState<ChunkPreviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [workspaceConfig, setWorkspaceConfig] = useState<WorkspaceConfig | null>(null);
+  const [presets, setPresets] = useState<PresetEntry[]>([]);
+  const [confirmRun, setConfirmRun] = useState(false);
+  const [runPending, setRunPending] = useState(false);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -32,7 +46,64 @@ export function ChunkingLab(): JSX.Element {
         if (first) setDocId(first.id);
       })
       .catch((e) => setError(String(e)));
+    api
+      .getWorkspace(workspaceId)
+      .then((r) => setWorkspaceConfig(r.config))
+      .catch(() => undefined);
+    api
+      .systemPresets()
+      .then((r) => setPresets(r.presets))
+      .catch(() => undefined);
   }, [workspaceId]);
+
+  const baseConfig = useMemo(() => {
+    if (workspaceConfig?.embedder_id) {
+      return {
+        embedder_id: workspaceConfig.embedder_id,
+        retrieval_strategy: workspaceConfig.retrieval_strategy,
+        top_k: workspaceConfig.top_k,
+        llm_id: workspaceConfig.llm_id,
+      };
+    }
+    const recommended = presets.find((p) => p.recommended) ?? presets[0];
+    if (recommended) {
+      return {
+        embedder_id: recommended.config.embedder_id,
+        retrieval_strategy: recommended.config.retrieval_strategy,
+        top_k: recommended.config.top_k,
+        llm_id: recommended.config.llm_id,
+      };
+    }
+    return null;
+  }, [workspaceConfig, presets]);
+
+  const runAsExperiment = async (): Promise<void> => {
+    if (!workspaceId || !baseConfig) return;
+    setRunPending(true);
+    setError(null);
+    try {
+      await api.startIndex(workspaceId, {
+        config: {
+          embedder_id: baseConfig.embedder_id,
+          chunking: {
+            strategy,
+            chunk_size: chunkSize,
+            chunk_overlap: chunkOverlap,
+          },
+          retrieval_strategy: baseConfig.retrieval_strategy,
+          top_k: baseConfig.top_k,
+          llm_id: baseConfig.llm_id,
+        },
+        force_reindex: true,
+      });
+      setConfirmRun(false);
+      navigate("/experiments");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunPending(false);
+    }
+  };
 
   useEffect(() => {
     if (!workspaceId || !docId) return;
@@ -69,6 +140,22 @@ export function ChunkingLab(): JSX.Element {
         eyebrow="Chunking Lab"
         title="Watch a slider rewrite the corpus."
         sub="전략과 크기를 조정하면서 즉시 청크가 어떻게 잘리는지 확인하세요. 변경 사항은 새 실험으로 저장됩니다."
+        right={
+          <button
+            className="btn btn-primary"
+            onClick={() => setConfirmRun(true)}
+            disabled={!baseConfig || documents.length === 0}
+            title={
+              !baseConfig
+                ? "no base config — open Auto-Pilot or pick a preset"
+                : documents.length === 0
+                  ? "upload documents first"
+                  : "Run as new experiment"
+            }
+          >
+            <Icon name="play" size={12} /> Run as new experiment
+          </button>
+        }
       />
 
       <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 24, marginTop: 32 }}>
@@ -106,6 +193,57 @@ export function ChunkingLab(): JSX.Element {
           <ChunkList preview={preview} />
         </div>
       </div>
+      {confirmRun && (
+        <Modal
+          title="Run as new experiment"
+          onClose={() => {
+            if (!runPending) setConfirmRun(false);
+          }}
+          footer={
+            <>
+              <button
+                className="btn"
+                onClick={() => setConfirmRun(false)}
+                disabled={runPending}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={runAsExperiment}
+                disabled={runPending}
+              >
+                {runPending ? "Starting…" : "Run"}
+              </button>
+            </>
+          }
+        >
+          <p className="t-14">
+            현재 슬라이더 값을 청킹 설정으로 새 실험을 시작합니다.
+          </p>
+          <div
+            className="t-mono t-12"
+            style={{
+              marginTop: 12,
+              padding: 12,
+              background: "var(--bg-2)",
+              border: "1px solid var(--border)",
+              color: "var(--text-1)",
+            }}
+          >
+            <div>strategy: {strategy}</div>
+            <div>chunk_size: {chunkSize}</div>
+            <div>chunk_overlap: {chunkOverlap}</div>
+            {baseConfig && <div>embedder: {baseConfig.embedder_id}</div>}
+            {baseConfig && <div>retrieval: {baseConfig.retrieval_strategy}</div>}
+          </div>
+          {error && (
+            <p style={{ color: "var(--error)", marginTop: 8 }} className="t-12">
+              {error}
+            </p>
+          )}
+        </Modal>
+      )}
     </section>
   );
 }
