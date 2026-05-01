@@ -251,6 +251,8 @@ export const api = {
 
   taskStatus: (taskId: string): Promise<{ status: string; kind: string }> =>
     request(`/tasks/${taskId}`),
+  cancelTask: (taskId: string): Promise<{ cancelled: boolean; task_id: string }> =>
+    request(`/tasks/${taskId}/cancel`, { method: "POST" }),
 
   chat: (
     workspaceId: string,

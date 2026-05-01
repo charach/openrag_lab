@@ -15,7 +15,7 @@ import {
 } from "../api/client";
 import { useWebSocket, type WSMessage } from "../hooks/useWebSocket";
 import { useWorkspaceStore } from "../stores/workspace";
-import { Icon, PageHeader, Step } from "../components/ui";
+import { Icon, Modal, PageHeader, Step } from "../components/ui";
 
 type PresetEntry = PresetResponse["presets"][number];
 
@@ -29,6 +29,9 @@ export function AutoPilotWizard(): JSX.Element {
   const [progress, setProgress] = useState<WSMessage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelled, setCancelled] = useState(false);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const navigate = useNavigate();
 
@@ -51,6 +54,21 @@ export function AutoPilotWizard(): JSX.Element {
     if (n === 1) return chosen ? "done" : "active";
     if (n === 2) return indexing ? "done" : chosen ? "active" : "todo";
     return indexing ? "active" : "todo";
+  };
+
+  const cancelIndex = async (): Promise<void> => {
+    if (!task) return;
+    setCancelling(true);
+    setError(null);
+    try {
+      await api.cancelTask(task.task_id);
+      setCancelled(true);
+      setConfirmCancel(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCancelling(false);
+    }
   };
 
   const launch = async (): Promise<void> => {
@@ -169,6 +187,39 @@ export function AutoPilotWizard(): JSX.Element {
           </div>
         </Step>
 
+        {confirmCancel && (
+          <Modal
+            title="Cancel indexing"
+            onClose={() => {
+              if (!cancelling) setConfirmCancel(false);
+            }}
+            footer={
+              <>
+                <button
+                  className="btn"
+                  onClick={() => setConfirmCancel(false)}
+                  disabled={cancelling}
+                >
+                  Keep running
+                </button>
+                <button
+                  className="btn"
+                  onClick={cancelIndex}
+                  disabled={cancelling}
+                  style={{ borderColor: "var(--error)", color: "var(--error)" }}
+                >
+                  {cancelling ? "Cancelling…" : "Cancel indexing"}
+                </button>
+              </>
+            }
+          >
+            <p className="t-14">
+              현재 작업을 중단합니다. 체크포인트가 보존되어 같은 설정으로 다시
+              인덱싱하면 이어서 진행됩니다.
+            </p>
+          </Modal>
+        )}
+
         {indexing && task && (
           <Step
             number="03"
@@ -203,7 +254,20 @@ export function AutoPilotWizard(): JSX.Element {
               <div className="row gap-12 f-center" style={{ marginTop: 4 }}>
                 <span className="t-12 t-meta t-mono">task_id {task.task_id}</span>
                 <span className="t-12 t-meta t-mono">exp {task.experiment_id}</span>
+                {cancelled && (
+                  <span className="chip" style={{ color: "var(--error)" }}>
+                    cancelled
+                  </span>
+                )}
                 <div style={{ flex: 1 }}></div>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => setConfirmCancel(true)}
+                  disabled={cancelled || (ratio !== null && ratio >= 0.999)}
+                  style={{ borderColor: "var(--border-strong)", color: "var(--text-1)" }}
+                >
+                  <Icon name="x" size={12} /> Cancel
+                </button>
                 <button
                   className="btn btn-primary btn-sm"
                   disabled={ratio === null || ratio < 0.999}
