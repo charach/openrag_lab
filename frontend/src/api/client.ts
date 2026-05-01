@@ -199,6 +199,19 @@ export const api = {
   listDocuments: (workspaceId: string): Promise<{ items: DocumentItem[]; next_cursor: null }> =>
     request(`/workspaces/${workspaceId}/documents`),
 
+  renameDocument: (
+    workspaceId: string,
+    documentId: string,
+    filename: string,
+  ): Promise<DocumentItem> =>
+    request(`/workspaces/${workspaceId}/documents/${documentId}`, {
+      method: "PATCH",
+      json: { filename },
+    }),
+
+  deleteDocument: (workspaceId: string, documentId: string): Promise<void> =>
+    request(`/workspaces/${workspaceId}/documents/${documentId}`, { method: "DELETE" }),
+
   uploadDocuments: async (
     workspaceId: string,
     files: File[],

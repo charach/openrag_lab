@@ -93,6 +93,56 @@ def test_delete_unknown_document_returns_404(app_state: AppState) -> None:
     assert resp.json()["error"]["code"] == "DOCUMENT_NOT_FOUND"
 
 
+def test_rename_document(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        upload = _upload(client, ws, ("before.txt", "content"))
+        doc_id = upload["uploaded"][0]["id"]
+        resp = client.patch(
+            f"/workspaces/{ws}/documents/{doc_id}",
+            json={"filename": "after.txt"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["filename"] == "after.txt"
+
+
+def test_rename_document_strips_path_traversal(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        upload = _upload(client, ws, ("a.txt", "x"))
+        doc_id = upload["uploaded"][0]["id"]
+        resp = client.patch(
+            f"/workspaces/{ws}/documents/{doc_id}",
+            json={"filename": "../../escape.txt"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["filename"] == "escape.txt"
+
+
+def test_rename_document_conflict(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        upload = _upload(client, ws, ("a.txt", "alpha"), ("b.txt", "beta"))
+        target = upload["uploaded"][0]["id"]
+        resp = client.patch(
+            f"/workspaces/{ws}/documents/{target}",
+            json={"filename": "b.txt"},
+        )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "DOCUMENT_FILENAME_CONFLICT"
+
+
+def test_rename_document_unknown_returns_404(app_state: AppState) -> None:
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        resp = client.patch(
+            f"/workspaces/{ws}/documents/doc_missing",
+            json={"filename": "anything.txt"},
+        )
+    assert resp.status_code == 404
+
+
 def test_chunking_preview_recursive(app_state: AppState) -> None:
     with TestClient(create_app(state=app_state)) as client:
         ws = _create_ws(client)

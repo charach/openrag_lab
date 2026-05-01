@@ -59,6 +59,10 @@ class ChunkingPreviewBody(BaseModel):
     max_chunks: int = Field(default=50, ge=1, le=200)
 
 
+class RenameDocumentBody(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+
+
 def _registry(state: AppState) -> WorkspaceRegistry:
     return WorkspaceRegistry(state.layout)
 
@@ -245,6 +249,85 @@ async def upload_documents(
             uploaded.append(_serialize_document(doc, indexing_status="not_indexed"))
 
     return {"uploaded": uploaded, "skipped": skipped, "failed": failed}
+
+
+@router.patch("/workspaces/{workspace_id}/documents/{document_id}")
+async def rename_document(
+    workspace_id: str,
+    document_id: str,
+    body: RenameDocumentBody,
+    state: Annotated[AppState, Depends(get_state)],
+) -> dict[str, Any]:
+    registry = _registry(state)
+    ws_id = WorkspaceId(workspace_id)
+    _require_workspace(registry, ws_id)
+    doc_id = DocumentId(document_id)
+
+    try:
+        new_name = _safe_filename(body.filename)
+    except ParseError as exc:
+        raise HttpError(
+            status_code=400,
+            code=exc.code,
+            message=exc.user_message,
+            recoverable=exc.recoverable,
+            details=exc.details,
+        ) from exc
+
+    paths = registry.paths_for(ws_id)
+    documents_root = paths.documents_dir.resolve()
+    new_path = paths.documents_dir / new_name
+    if not is_inside(documents_root, new_path):
+        raise HttpError(
+            status_code=400,
+            code="PATH_OUTSIDE_WORKSPACE",
+            message="파일명이 워크스페이스 디렉토리를 벗어납니다.",
+            recoverable=False,
+            details={"filename": body.filename},
+        )
+
+    with registry.open(ws_id) as conn:
+        repo = DocumentRepository(conn)
+        doc = repo.get(doc_id)
+        if doc is None or doc.workspace_id != ws_id:
+            raise HttpError(
+                status_code=404,
+                code="DOCUMENT_NOT_FOUND",
+                message="문서를 찾을 수 없습니다.",
+                recoverable=False,
+                details={"document_id": document_id},
+            )
+        if new_path.exists() and new_path.resolve() != doc.source_path.resolve():
+            raise HttpError(
+                status_code=409,
+                code="DOCUMENT_FILENAME_CONFLICT",
+                message="동일한 이름의 파일이 이미 존재합니다.",
+                recoverable=True,
+                details={"filename": new_name},
+            )
+        try:
+            if doc.source_path.exists():
+                doc.source_path.rename(new_path)
+        except OSError as exc:
+            raise HttpError(
+                status_code=500,
+                code="INTERNAL_ERROR",
+                message="파일 이름을 변경할 수 없습니다.",
+                recoverable=False,
+                details={"underlying": str(exc)},
+            ) from exc
+        repo.update_path(doc_id, new_path)
+        renamed = repo.get(doc_id)
+        assert renamed is not None
+        chunk_count_row = conn.execute(
+            "SELECT COUNT(*) AS n FROM chunk WHERE document_id = ?",
+            (str(doc_id),),
+        ).fetchone()
+        total = int(chunk_count_row["n"]) if chunk_count_row else 0
+    return _serialize_document(
+        renamed,
+        indexing_status="indexed" if total > 0 else "not_indexed",
+    )
 
 
 @router.delete(

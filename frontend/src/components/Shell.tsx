@@ -13,6 +13,7 @@ import { Icon, Modal } from "./ui";
 
 const NAV: Array<{ path: string; label: string; icon: Parameters<typeof Icon>[0]["name"] }> = [
   { path: "/", label: "Auto-Pilot", icon: "wand" },
+  { path: "/library", label: "Library", icon: "doc" },
   { path: "/chunking", label: "Chunking Lab", icon: "scissors" },
   { path: "/chat", label: "Chat", icon: "chat" },
   { path: "/experiments", label: "Experiments", icon: "grid" },

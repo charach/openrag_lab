@@ -9,12 +9,14 @@ import { AutoPilotWizard } from "./screens/AutoPilotWizard";
 import { ChatView } from "./screens/ChatView";
 import { ChunkingLab } from "./screens/ChunkingLab";
 import { ExperimentMatrix } from "./screens/ExperimentMatrix";
+import { Library } from "./screens/Library";
 
 export function App(): JSX.Element {
   return (
     <Shell>
       <Routes>
         <Route path="/" element={<AutoPilotWizard />} />
+        <Route path="/library" element={<Library />} />
         <Route path="/chunking" element={<ChunkingLab />} />
         <Route path="/chat" element={<ChatView />} />
         <Route path="/experiments" element={<ExperimentMatrix />} />

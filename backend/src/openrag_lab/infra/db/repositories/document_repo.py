@@ -74,6 +74,14 @@ class DocumentRepository:
         ).fetchall()
         return [_row_to_document(r) for r in rows]
 
+    def update_path(self, document_id: DocumentId, source_path: Path) -> int:
+        cur = self._conn.execute(
+            "UPDATE document SET source_path = ? WHERE id = ?",
+            (source_path.as_posix(), str(document_id)),
+        )
+        self._conn.commit()
+        return cur.rowcount
+
     def delete(self, document_id: DocumentId) -> int:
         cur = self._conn.execute("DELETE FROM document WHERE id = ?", (str(document_id),))
         self._conn.commit()
