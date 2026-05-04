@@ -416,4 +416,34 @@ export const api = {
       `/workspaces/${workspaceId}/experiments/${experimentId}/evaluate`,
       { method: "POST", json: body },
     ),
+
+  listExternalProviders: (): Promise<{ providers: ExternalProvider[] }> =>
+    request("/system/external-providers"),
+
+  registerExternalProviderKey: (
+    providerId: string,
+    body: { key: string; validate_now?: boolean },
+  ): Promise<{
+    provider_id: string;
+    key_registered: boolean;
+    key_suffix: string;
+    registered_at: string;
+    validation_status: string;
+  }> =>
+    request(`/system/external-providers/${providerId}/key`, {
+      method: "POST",
+      json: body,
+    }),
+
+  deleteExternalProviderKey: (providerId: string): Promise<void> =>
+    request(`/system/external-providers/${providerId}/key`, { method: "DELETE" }),
 };
+
+export interface ExternalProvider {
+  id: string;
+  name: string;
+  key_registered: boolean;
+  key_suffix?: string;
+  validation_status?: string;
+  supported_models: string[];
+}

@@ -362,6 +362,22 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
             </button>
           )}
           <button
+            aria-label="external LLM provider keys"
+            title="External LLM providers — manage API keys"
+            onClick={() => navigate("/providers")}
+            style={{
+              border: 0,
+              background: "transparent",
+              color: pathname === "/providers" ? "var(--accent)" : "var(--text-1)",
+              cursor: "pointer",
+              padding: 4,
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            <Icon name="lock" size={14} />
+          </button>
+          <button
             aria-label={`switch to ${theme === "noir" ? "light" : "dark"} theme`}
             title={`Theme: ${theme === "noir" ? "noir (dark)" : "pearl (light)"}`}
             onClick={toggleTheme}

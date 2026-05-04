@@ -51,6 +51,113 @@ describe("api.importGoldenPairs", () => {
   });
 });
 
+describe("api.listExternalProviders", () => {
+  it("GETs /system/external-providers and returns the providers array", async () => {
+    const fn = stubFetchOnce(
+      new Response(
+        JSON.stringify({
+          providers: [
+            { id: "openai", name: "OpenAI", key_registered: true, key_suffix: "...1234", supported_models: ["gpt-4o"] },
+            { id: "anthropic", name: "Anthropic", key_registered: false, supported_models: [] },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const r = await api.listExternalProviders();
+
+    expect(r.providers).toHaveLength(2);
+    expect(r.providers[0]).toMatchObject({ id: "openai", key_registered: true, key_suffix: "...1234" });
+    const [url, init] = fn.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/system/external-providers");
+    expect(init.method).toBeUndefined();
+  });
+});
+
+describe("api.registerExternalProviderKey", () => {
+  it("POSTs JSON {key, validate_now} to /providers/{id}/key", async () => {
+    const fn = stubFetchOnce(
+      new Response(
+        JSON.stringify({
+          provider_id: "openai",
+          key_registered: true,
+          key_suffix: "...9999",
+          registered_at: "2026-05-04T11:00:00Z",
+          validation_status: "ok",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const r = await api.registerExternalProviderKey("openai", {
+      key: "sk-xxx-9999",
+      validate_now: true,
+    });
+
+    expect(r.provider_id).toBe("openai");
+    expect(r.validation_status).toBe("ok");
+    const [url, init] = fn.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/system/external-providers/openai/key");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ key: "sk-xxx-9999", validate_now: true });
+  });
+
+  it("propagates 422 EXTERNAL_API_KEY_INVALID as ApiException", async () => {
+    stubFetchOnce(
+      new Response(
+        JSON.stringify({
+          error: { code: "EXTERNAL_API_KEY_INVALID", message: "no", recoverable: true },
+        }),
+        { status: 422, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await expect(
+      api.registerExternalProviderKey("openai", { key: "bad" }),
+    ).rejects.toMatchObject({ status: 422, error: { code: "EXTERNAL_API_KEY_INVALID" } });
+  });
+});
+
+describe("api.deleteExternalProviderKey", () => {
+  it("DELETEs and returns nothing on 204", async () => {
+    const fn = stubFetchOnce(new Response(null, { status: 204 }));
+
+    const r = await api.deleteExternalProviderKey("anthropic");
+
+    expect(r).toBeUndefined();
+    const [url, init] = fn.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/system/external-providers/anthropic/key");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("propagates 409 PROVIDER_IN_USE with workspace_ids", async () => {
+    stubFetchOnce(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "PROVIDER_IN_USE",
+            message: "in use",
+            recoverable: false,
+            details: { provider_id: "openai", workspace_ids: ["ws_a", "ws_b"] },
+          },
+        }),
+        { status: 409, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    try {
+      await api.deleteExternalProviderKey("openai");
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiException);
+      const apiErr = (e as ApiException).error;
+      expect(apiErr.code).toBe("PROVIDER_IN_USE");
+      expect(apiErr.details?.workspace_ids).toEqual(["ws_a", "ws_b"]);
+    }
+  });
+});
+
 describe("api.evaluateExperiment", () => {
   it("posts JSON body and returns the task envelope", async () => {
     const envelope = {
