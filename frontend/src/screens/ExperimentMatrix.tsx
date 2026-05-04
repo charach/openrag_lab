@@ -633,6 +633,16 @@ function NewExperimentPanel({
 
   const ready = embedderId.length > 0 && chunkSize >= 32 && topK >= 1;
 
+  // The catalog is derived from system presets — every preset advertises a
+  // tested combo, so the union is exactly the set of values the backend
+  // is known to accept. Custom values can still be typed by switching to
+  // the "(custom)" option, which leaves the input open.
+  const embedderOptions = uniqueValues(presets.map((p) => p.config.embedder_id));
+  const retrievalOptions = uniqueValues(presets.map((p) => p.config.retrieval_strategy));
+  const llmOptions = uniqueValues(
+    presets.map((p) => p.config.llm_id).filter((x): x is string => Boolean(x)),
+  );
+
   return (
     <div className="card" style={{ padding: 20, marginTop: 24 }}>
       <div className="row f-between f-center" style={{ marginBottom: 14 }}>
@@ -647,11 +657,11 @@ function NewExperimentPanel({
         }}
       >
         <Field label="embedder">
-          <input
-            className="input"
+          <CatalogSelect
             value={embedderId}
-            onChange={(e) => setEmbedderId(e.target.value)}
-            placeholder="e.g. sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+            options={embedderOptions}
+            onChange={setEmbedderId}
+            placeholder="select an embedder"
           />
         </Field>
         <Field label="strategy">
@@ -673,10 +683,11 @@ function NewExperimentPanel({
           </div>
         </Field>
         <Field label="retrieval">
-          <input
-            className="input"
+          <CatalogSelect
             value={retrieval}
-            onChange={(e) => setRetrieval(e.target.value)}
+            options={retrievalOptions}
+            onChange={setRetrieval}
+            placeholder="select a strategy"
           />
         </Field>
         <Field label={`chunk_size · ${chunkSize}`}>
@@ -716,12 +727,21 @@ function NewExperimentPanel({
             onChange={(e) => setTopK(Number(e.target.value))}
           />
         </Field>
-        <Field label="llm">
-          <input
-            className="input"
+        <Field
+          label="llm"
+          aside={
+            <Link to="/providers" className="t-12" style={{ color: "var(--accent)" }}>
+              Manage →
+            </Link>
+          }
+        >
+          <CatalogSelect
             value={llmId ?? ""}
+            options={llmOptions}
+            onChange={(v) => setLlmId(v || null)}
             placeholder="(retrieval-only)"
-            onChange={(e) => setLlmId(e.target.value || null)}
+            allowEmpty
+            emptyLabel="(retrieval-only)"
           />
         </Field>
       </div>
@@ -741,13 +761,100 @@ function NewExperimentPanel({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+function Field({
+  label,
+  children,
+  aside,
+}: {
+  label: string;
+  children: React.ReactNode;
+  aside?: React.ReactNode;
+}): JSX.Element {
   return (
     <div className="col gap-6">
-      <span className="t-label">{label}</span>
+      <div className="row f-between f-center">
+        <span className="t-label">{label}</span>
+        {aside}
+      </div>
       {children}
     </div>
   );
+}
+
+const CUSTOM_SENTINEL = "__custom__";
+
+/**
+ * Select-with-fallback for catalog values that are usually one of N
+ * preset options but occasionally need a hand-typed override (e.g.
+ * trying a new embedder before it's added to a preset). Picking
+ * "(custom)" reveals a free-form input next to the dropdown.
+ */
+export function CatalogSelect({
+  value,
+  options,
+  onChange,
+  placeholder,
+  allowEmpty,
+  emptyLabel,
+}: {
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+  placeholder?: string;
+  allowEmpty?: boolean;
+  emptyLabel?: string;
+}): JSX.Element {
+  const inCatalog = value === "" || options.includes(value);
+  const selectValue = value === ""
+    ? ""
+    : inCatalog
+      ? value
+      : CUSTOM_SENTINEL;
+  return (
+    <div className="row gap-6 f-center">
+      <select
+        className="select"
+        value={selectValue}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === CUSTOM_SENTINEL) {
+            // Keep the existing custom value (or empty) so the user can
+            // start typing without losing what was already entered.
+            onChange(value === "" || options.includes(value) ? "" : value);
+            return;
+          }
+          onChange(v);
+        }}
+        style={{ flex: 1, minWidth: 0 }}
+      >
+        {allowEmpty && <option value="">{emptyLabel ?? placeholder ?? "—"}</option>}
+        {!allowEmpty && value === "" && (
+          <option value="" disabled>
+            {placeholder ?? "select…"}
+          </option>
+        )}
+        {options.map((opt) => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+        <option value={CUSTOM_SENTINEL}>(custom)</option>
+      </select>
+      {!inCatalog && (
+        <input
+          className="input"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          style={{ flex: 1, minWidth: 0 }}
+        />
+      )}
+    </div>
+  );
+}
+
+export function uniqueValues(xs: string[]): string[] {
+  return Array.from(new Set(xs.filter((s) => s.length > 0)));
 }
 
 const CHART_PALETTE = ["#C8A96A", "#7A8B6F", "#B8B2A4", "#6E6A60", "#3A3A3A"];

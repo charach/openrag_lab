@@ -139,7 +139,16 @@ export function ChatView(): JSX.Element {
 
   return (
     <section className="page" style={{ maxWidth: 1280 }}>
-      <PageHeader eyebrow="Chat" title="Ask the corpus." sub="실험을 선택해 그 실험의 인덱스로 질문하세요. 대화는 자동 저장됩니다." />
+      <PageHeader
+        eyebrow="Chat"
+        title="Ask the corpus."
+        sub="실험을 선택해 그 실험의 인덱스로 질문하세요. 대화는 자동 저장됩니다."
+        right={
+          <Link to="/providers" className="btn btn-sm" title="외부 LLM 제공자 키 관리">
+            <Icon name="lock" size={11} /> LLM providers
+          </Link>
+        }
+      />
 
       <div
         style={{
