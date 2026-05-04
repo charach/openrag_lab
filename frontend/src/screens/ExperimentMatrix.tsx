@@ -5,9 +5,9 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useWebSocket, type WSMessage } from "../hooks/useWebSocket";
-import { Modal } from "../components/ui";
+import { Icon, Modal } from "../components/ui";
 import {
   Bar,
   BarChart,
@@ -18,9 +18,19 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api, type ExperimentDetail, type ExperimentSummary } from "../api/client";
+import {
+  api,
+  type ExperimentDetail,
+  type ExperimentSummary,
+  type PresetResponse,
+  type WorkspaceConfig,
+} from "../api/client";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useIndexingStore } from "../stores/indexing";
 import { Drawer, PageHeader, ScoreCell } from "../components/ui";
+
+type PresetEntry = PresetResponse["presets"][number];
+type Strategy = "recursive" | "fixed";
 
 const METRICS = [
   "faithfulness",
@@ -203,6 +213,11 @@ export function ExperimentMatrix(): JSX.Element {
           <span className="t-12 t-mono">{error}</span>
         </div>
       )}
+
+      <NewExperimentPanel
+        workspaceId={workspaceId}
+        onLaunched={refreshExperiments}
+      />
 
       <div className="card" style={{ marginTop: 32, padding: 0, overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -517,6 +532,218 @@ function DetailBody({ detail }: { detail: ExperimentDetail }): JSX.Element {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * New experiment panel — defines a config and dispatches an indexing job.
+ * Seeds from the workspace's latest config so users only tweak deltas;
+ * falls back to the recommended preset when the workspace has no runs yet.
+ */
+function NewExperimentPanel({
+  workspaceId,
+  onLaunched,
+}: {
+  workspaceId: string;
+  onLaunched: () => void;
+}): JSX.Element {
+  const navigate = useNavigate();
+  const indexing = useIndexingStore();
+  const [presets, setPresets] = useState<PresetEntry[]>([]);
+  const [seed, setSeed] = useState<WorkspaceConfig | null>(null);
+  const [strategy, setStrategy] = useState<Strategy>("recursive");
+  const [chunkSize, setChunkSize] = useState(512);
+  const [chunkOverlap, setChunkOverlap] = useState(64);
+  const [topK, setTopK] = useState(5);
+  const [embedderId, setEmbedderId] = useState<string>("");
+  const [retrieval, setRetrieval] = useState<string>("dense");
+  const [llmId, setLlmId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.systemPresets().then((r) => setPresets(r.presets)).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    api
+      .getWorkspace(workspaceId)
+      .then((r) => {
+        const cfg = r.config;
+        setSeed(cfg);
+        if (cfg.embedder_id) {
+          setEmbedderId(cfg.embedder_id);
+          setRetrieval(cfg.retrieval_strategy);
+          setTopK(cfg.top_k);
+          setLlmId(cfg.llm_id);
+          setStrategy((cfg.chunking.strategy ?? "recursive") as Strategy);
+          if (cfg.chunking.chunk_size) setChunkSize(cfg.chunking.chunk_size);
+          if (cfg.chunking.chunk_overlap !== undefined) setChunkOverlap(cfg.chunking.chunk_overlap);
+        }
+      })
+      .catch(() => undefined);
+  }, [workspaceId]);
+
+  // When workspace has no config but we have presets, fall back to recommended.
+  useEffect(() => {
+    if (seed?.embedder_id) return;
+    const rec = presets.find((p) => p.recommended) ?? presets[0];
+    if (rec) {
+      setEmbedderId(rec.config.embedder_id);
+      setRetrieval(rec.config.retrieval_strategy);
+      setTopK(rec.config.top_k);
+      setLlmId(rec.config.llm_id);
+      setStrategy(rec.config.chunking.strategy as Strategy);
+      setChunkSize(rec.config.chunking.chunk_size);
+      setChunkOverlap(rec.config.chunking.chunk_overlap);
+    }
+  }, [presets, seed]);
+
+  const launch = async (): Promise<void> => {
+    if (!workspaceId || !embedderId) return;
+    setSubmitting(true);
+    setErr(null);
+    try {
+      indexing.startStarting(workspaceId);
+      const accepted = await api.startIndex(workspaceId, {
+        config: {
+          embedder_id: embedderId,
+          chunking: { strategy, chunk_size: chunkSize, chunk_overlap: chunkOverlap },
+          retrieval_strategy: retrieval,
+          top_k: topK,
+          llm_id: llmId,
+        },
+        force_reindex: true,
+      });
+      indexing.setTask(accepted);
+      onLaunched();
+      navigate("/");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(msg);
+      indexing.markError(msg);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const ready = embedderId.length > 0 && chunkSize >= 32 && topK >= 1;
+
+  return (
+    <div className="card" style={{ padding: 20, marginTop: 24 }}>
+      <div className="row f-between f-center" style={{ marginBottom: 14 }}>
+        <span className="t-label">Define new experiment</span>
+        <span className="t-12 t-meta">현재 워크스페이스 최신 설정에서 시작합니다.</span>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 16,
+        }}
+      >
+        <Field label="embedder">
+          <input
+            className="input"
+            value={embedderId}
+            onChange={(e) => setEmbedderId(e.target.value)}
+            placeholder="e.g. sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+          />
+        </Field>
+        <Field label="strategy">
+          <div className="row gap-6">
+            {(["recursive", "fixed"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setStrategy(s)}
+                style={{
+                  borderColor: strategy === s ? "var(--accent)" : undefined,
+                  color: strategy === s ? "var(--accent)" : "var(--text-1)",
+                }}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </Field>
+        <Field label="retrieval">
+          <input
+            className="input"
+            value={retrieval}
+            onChange={(e) => setRetrieval(e.target.value)}
+          />
+        </Field>
+        <Field label={`chunk_size · ${chunkSize}`}>
+          <input
+            type="range"
+            className="range"
+            min={32}
+            max={2048}
+            step={32}
+            value={chunkSize}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setChunkSize(v);
+              if (chunkOverlap > Math.floor(v / 2)) setChunkOverlap(Math.floor(v / 2));
+            }}
+          />
+        </Field>
+        <Field label={`chunk_overlap · ${chunkOverlap}`}>
+          <input
+            type="range"
+            className="range"
+            min={0}
+            max={Math.floor(chunkSize / 2)}
+            step={8}
+            value={chunkOverlap}
+            onChange={(e) => setChunkOverlap(Number(e.target.value))}
+          />
+        </Field>
+        <Field label={`top_k · ${topK}`}>
+          <input
+            type="range"
+            className="range"
+            min={1}
+            max={20}
+            step={1}
+            value={topK}
+            onChange={(e) => setTopK(Number(e.target.value))}
+          />
+        </Field>
+        <Field label="llm">
+          <input
+            className="input"
+            value={llmId ?? ""}
+            placeholder="(retrieval-only)"
+            onChange={(e) => setLlmId(e.target.value || null)}
+          />
+        </Field>
+      </div>
+      <div className="row f-between f-center" style={{ marginTop: 16 }}>
+        <span className="t-12 t-meta">
+          {err ? <span style={{ color: "var(--error)" }}>{err}</span> : "동일 fingerprint 면 캐시된 인덱스를 재사용합니다."}
+        </span>
+        <button
+          className="btn btn-primary"
+          onClick={launch}
+          disabled={!ready || submitting}
+        >
+          <Icon name="play" size={12} /> {submitting ? "Starting…" : "Run experiment"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+  return (
+    <div className="col gap-6">
+      <span className="t-label">{label}</span>
+      {children}
     </div>
   );
 }
