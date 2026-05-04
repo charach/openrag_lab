@@ -382,6 +382,8 @@ export function ExperimentMatrix(): JSX.Element {
             <span className="t-label">A / B Compare</span>
             <span className="t-12 t-meta">top 5 by sort order</span>
           </div>
+          <GoldenSetPreview workspaceId={workspaceId} />
+          <div style={{ height: 1, background: "var(--border)", margin: "16px 0" }}></div>
           <div style={{ width: "100%", height: 320 }}>
             <ResponsiveContainer>
               <BarChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: -8 }}>
@@ -810,5 +812,137 @@ function Td({
     <td style={{ padding: "12px 16px", textAlign: align ?? "left", verticalAlign: "middle" }}>
       {children}
     </td>
+  );
+}
+
+interface GoldenPair {
+  id: string;
+  question: string;
+  expected_answer: string | null;
+  expected_chunk_ids: string[];
+}
+
+/**
+ * In-line preview of the workspace's golden Q/A pairs so users can read
+ * the exact questions and expected answers that drive the RAGAS scores
+ * shown above. Full CRUD lives on /golden-sets — this panel is read-only
+ * with a quick "edit" link, so the comparison view stays focused.
+ */
+function GoldenSetPreview({ workspaceId }: { workspaceId: string }): JSX.Element {
+  const [sets, setSets] = useState<Array<{ id: string; name: string; pair_count: number }>>([]);
+  const [setId, setSetId] = useState<string>("");
+  const [pairs, setPairs] = useState<GoldenPair[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    api
+      .listGoldenSets(workspaceId)
+      .then((r) => {
+        setSets(r.items);
+        setSetId(r.items[0]?.id ?? "");
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId || !setId) {
+      setPairs([]);
+      return;
+    }
+    setLoading(true);
+    api
+      .listGoldenPairs(workspaceId, setId)
+      .then((r) => {
+        setPairs(r.items);
+        setError(null);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, [workspaceId, setId]);
+
+  return (
+    <div className="col gap-10">
+      <div className="row f-between f-center">
+        <div className="row gap-10 f-center">
+          <span className="t-label">Golden set in use</span>
+          {sets.length > 0 ? (
+            <select
+              className="select"
+              value={setId}
+              onChange={(e) => setSetId(e.target.value)}
+              style={{ minWidth: 220 }}
+            >
+              {sets.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name} ({g.pair_count} pairs)
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="t-12 t-meta">없음 — 골든셋을 먼저 만들어 두세요.</span>
+          )}
+        </div>
+        <Link to="/golden-sets" className="btn btn-sm">
+          Edit in Golden sets →
+        </Link>
+      </div>
+      {error && (
+        <span className="t-12" style={{ color: "var(--error)" }}>
+          {error}
+        </span>
+      )}
+      {loading && <span className="t-12 t-meta">Loading pairs…</span>}
+      {!loading && pairs.length === 0 && setId && (
+        <span className="t-12 t-meta">선택한 골든셋에 Q/A 페어가 없습니다.</span>
+      )}
+      {pairs.length > 0 && (
+        <div
+          className="col"
+          style={{
+            border: "1px solid var(--border)",
+            background: "var(--bg-0)",
+            maxHeight: 220,
+            overflowY: "auto",
+          }}
+        >
+          {pairs.slice(0, 5).map((p, idx) => (
+            <div
+              key={p.id}
+              style={{
+                padding: "10px 12px",
+                borderBottom: idx < Math.min(pairs.length, 5) - 1 ? "1px solid var(--border)" : 0,
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 12,
+              }}
+            >
+              <div className="col gap-3">
+                <span className="t-label" style={{ fontSize: 9 }}>
+                  Question
+                </span>
+                <span className="t-13" style={{ lineHeight: 1.5 }}>
+                  {p.question}
+                </span>
+              </div>
+              <div className="col gap-3">
+                <span className="t-label" style={{ fontSize: 9 }}>
+                  Expected answer
+                </span>
+                <span className="t-13 t-meta" style={{ lineHeight: 1.5 }}>
+                  {p.expected_answer ?? "—"}
+                </span>
+              </div>
+            </div>
+          ))}
+          {pairs.length > 5 && (
+            <span className="t-12 t-meta" style={{ padding: "8px 12px" }}>
+              +{pairs.length - 5} more pairs · open Golden sets to view all
+            </span>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
