@@ -36,6 +36,31 @@ async def test_round_trip(tmp_path: Path) -> None:
     assert hits[0].chunk_id == a
 
 
+async def test_cosine_score_is_similarity_in_unit_range(tmp_path: Path) -> None:
+    """Cosine search must return scores ≈ similarity (1.0 for identical, ~0
+    for orthogonal). Regression for the bug where ``score = -dist`` produced
+    negative numbers that the UI clamped to 0.0%."""
+    store = ChromaVectorStore(tmp_path / "chroma")
+    await store.create_collection("vectors_cos", dim=3, metric=DistanceMetric.COSINE)
+    a = new_chunk_id()
+    b = new_chunk_id()
+    await store.upsert(
+        "vectors_cos",
+        [
+            VectorItem(chunk_id=a, vector=_vec(1, 0, 0)),
+            VectorItem(chunk_id=b, vector=_vec(0, 1, 0)),
+        ],
+    )
+    hits = await store.search("vectors_cos", _vec(1, 0, 0), top_k=2)
+    by_id = {h.chunk_id: h.score for h in hits}
+    # Identical vector → similarity ≈ 1.0
+    assert by_id[a] == pytest.approx(1.0, abs=1e-3)
+    # Orthogonal → similarity ≈ 0.0
+    assert by_id[b] == pytest.approx(0.0, abs=1e-3)
+    # All scores must be ≥ 0 for the UI percentage to render meaningfully
+    assert all(h.score >= -1e-6 for h in hits)
+
+
 async def test_create_collection_is_idempotent(tmp_path: Path) -> None:
     store = ChromaVectorStore(tmp_path / "chroma")
     await store.create_collection("vectors_test", dim=2, metric=DistanceMetric.COSINE)

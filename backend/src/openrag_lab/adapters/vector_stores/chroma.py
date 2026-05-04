@@ -64,6 +64,7 @@ class ChromaVectorStore:
             path=str(persist_directory),
             settings=Settings(anonymized_telemetry=False, allow_reset=False),
         )
+        self._metric_cache: dict[str, DistanceMetric] = {}
 
     async def create_collection(self, name: str, dim: int, metric: DistanceMetric) -> None:
         chroma_space = _METRIC_TO_CHROMA[metric]
@@ -106,6 +107,7 @@ class ChromaVectorStore:
         filters: dict[str, Any] | None = None,
     ) -> list[VectorHit]:
         col = await asyncio.to_thread(self._client.get_collection, collection)
+        metric = self._metric_for(collection, col)
         result = await asyncio.to_thread(
             col.query,
             query_embeddings=[query_vector.astype("float32").tolist()],
@@ -120,8 +122,7 @@ class ChromaVectorStore:
         metadatas = metadatas_outer[0] if metadatas_outer else [{}] * len(ids)
         out: list[VectorHit] = []
         for cid, dist, meta in zip(ids, distances, metadatas, strict=False):
-            # Chroma returns distance, smaller is closer. Convert to "higher is better".
-            score = float(-dist) if dist is not None else 0.0
+            score = _distance_to_score(dist, metric)
             out.append(
                 VectorHit(
                     chunk_id=ChunkId(cid),
@@ -130,6 +131,16 @@ class ChromaVectorStore:
                 )
             )
         return out
+
+    def _metric_for(self, collection: str, col: Any) -> DistanceMetric:
+        cached = self._metric_cache.get(collection)
+        if cached is not None:
+            return cached
+        meta = col.metadata or {}
+        space = meta.get("hnsw:space", "cosine")
+        metric = _CHROMA_TO_METRIC.get(space, DistanceMetric.COSINE)
+        self._metric_cache[collection] = metric
+        return metric
 
     async def delete(self, collection: str, ids: list[ChunkId]) -> None:
         if not ids:
@@ -148,6 +159,25 @@ class ChromaVectorStore:
 
 
 _CHROMA_TO_METRIC = {v: k for k, v in _METRIC_TO_CHROMA.items()}
+
+
+def _distance_to_score(dist: float | None, metric: DistanceMetric) -> float:
+    """Map Chroma's distance to a "higher is better" score.
+
+    Chroma always reports a distance (smaller = closer), but the conversion
+    back to a similarity that fits the [0, 1]-ish range expected by the UI
+    depends on the metric:
+
+    * COSINE: dist = 1 - cos_sim, so the similarity is ``1 - dist``
+      (typically ∈ [0, 1] when both vectors share orientation).
+    * L2 / IP: there is no natural [0, 1] mapping, so we keep ``-dist``
+      which preserves ranking but is non-positive.
+    """
+    if dist is None:
+        return 0.0
+    if metric is DistanceMetric.COSINE:
+        return float(1.0 - dist)
+    return float(-dist)
 
 
 def _chroma_upsert(
