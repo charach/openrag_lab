@@ -433,18 +433,50 @@ interface ModalProps {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  /**
+   * Optional confirm shortcut. When set, pressing Enter anywhere inside
+   * the modal (except multi-line text areas) fires this handler. Lets
+   * dismiss-on-Esc / confirm-on-Enter behave consistently across every
+   * modal without each callsite re-binding the same key handler.
+   */
+  onConfirm?: () => void;
   footer?: ReactNode;
   width?: number;
 }
 
-export function Modal({ title, children, onClose, footer, width = 480 }: ModalProps): JSX.Element {
+export function Modal({
+  title,
+  children,
+  onClose,
+  onConfirm,
+  footer,
+  width = 480,
+}: ModalProps): JSX.Element {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      onClose();
+      return;
+    }
+    if (e.key === "Enter" && onConfirm) {
+      const target = e.target as HTMLElement;
+      // Don't hijack newline-in-textarea or multi-line composers.
+      if (target.tagName === "TEXTAREA") return;
+      // IME composition shouldn't trigger the confirm.
+      if (e.nativeEvent.isComposing) return;
+      e.preventDefault();
+      onConfirm();
+    }
+  };
   return (
     <div
       role="dialog"
       aria-label={title}
+      onKeyDown={onKeyDown}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
+      tabIndex={-1}
       style={{
         position: "fixed",
         inset: 0,
