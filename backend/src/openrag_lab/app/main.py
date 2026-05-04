@@ -23,10 +23,12 @@ from openrag_lab.app.api.tasks import router as tasks_router
 from openrag_lab.app.api.workspaces import router as workspaces_router
 from openrag_lab.app.errors import install_exception_handlers
 from openrag_lab.app.runtime_lock import acquire, release
-from openrag_lab.app.services.runtime import RuntimeFactories
+from openrag_lab.app.services.runtime import RuntimeFactories, make_default_factories
 from openrag_lab.app.state import AppState
 from openrag_lab.app.ws.endpoint import router as ws_router
 from openrag_lab.config.settings import load as load_settings
+from openrag_lab.infra.external.http_client import build_client
+from openrag_lab.infra.external.keystore import Keystore
 from openrag_lab.infra.fs.workspace_layout import default_layout
 from openrag_lab.infra.hardware.probe import probe_system
 
@@ -56,20 +58,29 @@ def _e2e_factories() -> RuntimeFactories:
 def _bootstrap_state() -> AppState:
     import os
 
-    from openrag_lab.app.services.runtime import default_factories
-
     layout = default_layout()
     layout.ensure()
     profile = probe_system()
     settings = load_settings(layout.settings_yaml)
-    factories = (
-        _e2e_factories() if os.environ.get("OPENRAG_LAB_TEST_MODE") == "1" else default_factories()
+    if os.environ.get("OPENRAG_LAB_TEST_MODE") == "1":
+        return AppState(
+            layout=layout,
+            profile=profile,
+            settings=settings,
+            factories=_e2e_factories(),
+        )
+    http_client = build_client(settings.network)
+    factories = make_default_factories(
+        keystore=Keystore(layout.api_keys_yaml),
+        external_settings=settings.external,
+        http_client=http_client,
     )
     return AppState(
         layout=layout,
         profile=profile,
         settings=settings,
         factories=factories,
+        http_client=http_client,
     )
 
 
@@ -89,6 +100,8 @@ def create_app(*, state: AppState | None = None) -> FastAPI:
         try:
             yield
         finally:
+            if bound_state.http_client is not None:
+                await bound_state.http_client.aclose()
             release(bound_state.layout.runtime_lock)
 
     app = FastAPI(

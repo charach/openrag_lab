@@ -13,11 +13,20 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
+
 from openrag_lab.adapters.chunkers.fixed import FixedChunker
 from openrag_lab.adapters.chunkers.recursive import RecursiveChunker
 from openrag_lab.adapters.parsers.markdown import MarkdownParser
 from openrag_lab.adapters.parsers.txt import TxtParser
 from openrag_lab.app.services.workspace_registry import WorkspaceRegistry
+from openrag_lab.config.settings import ExternalSettings
+from openrag_lab.domain.errors import ConfigurationError
+from openrag_lab.domain.models.external import (
+    ExternalProvider,
+    is_external_llm_id,
+    parse_external_llm_id,
+)
 from openrag_lab.domain.models.ids import WorkspaceId
 from openrag_lab.domain.ports.chunker import Chunker
 from openrag_lab.domain.ports.embedder import Embedder
@@ -32,6 +41,7 @@ from openrag_lab.infra.db.repositories.chunk_repo import ChunkRepository
 from openrag_lab.infra.db.repositories.document_repo import DocumentRepository
 from openrag_lab.infra.db.repositories.experiment_repo import ExperimentRepository
 from openrag_lab.infra.db.sqlite import connect
+from openrag_lab.infra.external.keystore import Keystore
 
 EmbedderFactory = Callable[[str], Embedder]
 # Vector store factory receives the workspace id and the persistence dir.
@@ -83,6 +93,105 @@ def _default_judge_factory(judge_llm_id: str) -> EvaluatorJudge:
     from openrag_lab.adapters.evaluators.llm_judge import LLMJudge
 
     return LLMJudge(_default_llm_factory(judge_llm_id))
+
+
+def _build_external_llm(
+    ref_provider: ExternalProvider,
+    *,
+    model: str,
+    api_key: str,
+    client: httpx.AsyncClient,
+) -> LLM:
+    if ref_provider is ExternalProvider.OPENAI:
+        from openrag_lab.adapters.llms.openai import OpenAILLM
+
+        return OpenAILLM(model=model, api_key=api_key, client=client)
+    if ref_provider is ExternalProvider.ANTHROPIC:
+        from openrag_lab.adapters.llms.anthropic import AnthropicLLM
+
+        return AnthropicLLM(model=model, api_key=api_key, client=client)
+    if ref_provider is ExternalProvider.GEMINI:
+        from openrag_lab.adapters.llms.gemini import GeminiLLM
+
+        return GeminiLLM(model=model, api_key=api_key, client=client)
+    if ref_provider is ExternalProvider.OPENROUTER:
+        from openrag_lab.adapters.llms.openrouter import OpenRouterLLM
+
+        return OpenRouterLLM(model=model, api_key=api_key, client=client)
+    raise ConfigurationError(
+        f"지원하지 않는 외부 제공자입니다: {ref_provider!r}.",
+        code="EXTERNAL_PROVIDER_UNKNOWN",
+        recoverable=False,
+        details={"provider_id": str(ref_provider)},
+    )
+
+
+def make_external_llm_factory(
+    *,
+    keystore: Keystore,
+    external_settings: ExternalSettings,
+    http_client: httpx.AsyncClient,
+) -> LLMFactory:
+    """Build an LLM factory that routes ``external:<provider>:<model>`` ids.
+
+    Non-external ids fall back to ``NullLLM`` (retrieval-only mode), so the
+    factory remains a drop-in replacement for ``_default_llm_factory``.
+    """
+    from openrag_lab.adapters.llms.null import NullLLM
+
+    def factory(llm_id: str) -> LLM:
+        if not llm_id or not is_external_llm_id(llm_id):
+            return NullLLM()
+        ref = parse_external_llm_id(llm_id)
+        if not external_settings.allow_llm_api:
+            raise ConfigurationError(
+                "외부 LLM API 사용이 비활성화되어 있습니다.",
+                code="EXTERNAL_API_NOT_ENABLED",
+                recoverable=True,
+                details={"attempted_llm_id": llm_id},
+            )
+        if ref.provider.value not in external_settings.allowed_providers:
+            raise ConfigurationError(
+                f"외부 제공자 '{ref.provider.value}'가 허용 목록에 없습니다.",
+                code="EXTERNAL_PROVIDER_NOT_ALLOWED",
+                recoverable=True,
+                details={
+                    "provider": ref.provider.value,
+                    "allowed": list(external_settings.allowed_providers),
+                },
+            )
+        api_key = keystore.require(ref.provider)
+        return _build_external_llm(
+            ref.provider, model=ref.model, api_key=api_key, client=http_client
+        )
+
+    return factory
+
+
+def make_default_factories(
+    *,
+    keystore: Keystore,
+    external_settings: ExternalSettings,
+    http_client: httpx.AsyncClient,
+) -> RuntimeFactories:
+    """Production factories: external-LLM aware ``llm`` and ``judge``."""
+    from openrag_lab.adapters.evaluators.llm_judge import LLMJudge
+
+    llm_factory = make_external_llm_factory(
+        keystore=keystore,
+        external_settings=external_settings,
+        http_client=http_client,
+    )
+
+    def judge_factory(judge_llm_id: str) -> EvaluatorJudge:
+        return LLMJudge(llm_factory(judge_llm_id))
+
+    return RuntimeFactories(
+        embedder=_default_embedder_factory,
+        vector_store=_default_vector_store_factory,
+        llm=llm_factory,
+        judge=judge_factory,
+    )
 
 
 @dataclass

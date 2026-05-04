@@ -56,6 +56,23 @@ class NetworkSettings(BaseModel):
     timeouts: TimeoutSettings = Field(default_factory=TimeoutSettings)
 
 
+class ExternalSettings(BaseModel):
+    """External LLM provider gating (PLATFORM.md §11, ERROR_CODES.md §8).
+
+    ``allow_llm_api`` is the master switch — when False every external LLM
+    call is refused with ``EXTERNAL_API_NOT_ENABLED`` regardless of the
+    keystore. ``allowed_providers`` further restricts which of the four
+    supported providers are reachable; the default permits all four.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    allow_llm_api: bool = True
+    allowed_providers: tuple[str, ...] = Field(
+        default=("openai", "anthropic", "gemini", "openrouter")
+    )
+
+
 class GlobalSettings(BaseModel):
     """Top-level ``settings.yaml`` document.
 
@@ -66,6 +83,7 @@ class GlobalSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     network: NetworkSettings = Field(default_factory=NetworkSettings)
+    external: ExternalSettings = Field(default_factory=ExternalSettings)
     warnings: tuple[str, ...] = Field(default_factory=tuple)
 
     @field_validator("network", mode="after")

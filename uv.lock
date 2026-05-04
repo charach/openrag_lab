@@ -995,6 +995,7 @@ source = { editable = "." }
 dependencies = [
     { name = "chromadb" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "numpy" },
     { name = "pydantic" },
     { name = "pymupdf" },
@@ -1006,7 +1007,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "import-linter" },
     { name = "mypy" },
     { name = "pre-commit" },
@@ -1021,6 +1021,7 @@ dev = [
 requires-dist = [
     { name = "chromadb", specifier = ">=1.5.8" },
     { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "httpx", specifier = ">=0.27,<1" },
     { name = "numpy", specifier = ">=1.26,<3" },
     { name = "pydantic", specifier = ">=2.9,<3" },
     { name = "pymupdf", specifier = ">=1.27.2.3" },
@@ -1032,7 +1033,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.27,<1" },
     { name = "import-linter", specifier = ">=2.1,<3" },
     { name = "mypy", specifier = ">=1.13,<2" },
     { name = "pre-commit", specifier = ">=4.0,<5" },

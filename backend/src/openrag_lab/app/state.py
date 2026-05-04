@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import httpx
+
 from openrag_lab.app.services.runtime import RuntimeFactories, default_factories
 from openrag_lab.app.ws.hub import WebSocketHub
 from openrag_lab.config.settings import GlobalSettings, default_settings
@@ -36,6 +38,9 @@ class AppState:
     task_metadata: dict[TaskId, TaskMetadata] = field(default_factory=dict)
     # Latest experiment per workspace, used by retrieval/chat (P0).
     workspace_active_experiment: dict[str, ExperimentId] = field(default_factory=dict)
+    # Shared async HTTP client used by external LLM adapters. ``None`` in
+    # tests / test-mode boot — closed by the FastAPI lifespan when set.
+    http_client: httpx.AsyncClient | None = None
 
 
 @dataclass

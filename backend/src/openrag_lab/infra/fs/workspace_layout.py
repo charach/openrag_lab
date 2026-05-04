@@ -97,6 +97,11 @@ class WorkspaceLayout:
         return self.root / "settings.yaml"
 
     @property
+    def api_keys_yaml(self) -> Path:
+        """File-backed keystore for external LLM provider API keys."""
+        return self.root / "api_keys.yaml"
+
+    @property
     def runtime_lock(self) -> Path:
         return self.root / "runtime.lock"
 
