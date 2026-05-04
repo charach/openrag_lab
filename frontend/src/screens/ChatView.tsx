@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState, type KeyboardEvent } from "react";
+import { Link } from "react-router-dom";
 import {
   api,
   type ChatChunk,
@@ -16,6 +17,18 @@ import {
 } from "../api/client";
 import { useWorkspaceStore } from "../stores/workspace";
 import { Icon, Modal, PageHeader, RetrievalOnlyBadge } from "../components/ui";
+
+/**
+ * Cosine similarity is reported in [-1, 1]; negative values mean "essentially
+ * unrelated" and confuse non-experts when shown as a -0.564 score. Clamp to
+ * [0, 1] for the displayed relevance number.
+ */
+export function normalizeScore(raw: number): number {
+  if (!Number.isFinite(raw)) return 0;
+  if (raw < 0) return 0;
+  if (raw > 1) return 1;
+  return raw;
+}
 
 type TurnView = ChatTurnRecord & { _pending?: boolean };
 
@@ -344,10 +357,22 @@ function TurnCard({
       </p>
 
       {isRetrievalOnly ? (
-        <div className="row gap-12 f-center" style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-          <RetrievalOnlyBadge />
-          <span className="t-13 t-dim">
-            LLM이 설정되지 않아 답변 생성은 생략되었습니다. 검색된 청크는 아래 패널에서 확인하세요.
+        <div
+          className="col gap-8"
+          style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}
+        >
+          <div className="row gap-12 f-center">
+            <RetrievalOnlyBadge />
+            <span className="t-13 t-dim">
+              이 실험은 LLM이 설정되지 않아 답변 생성을 건너뜁니다. 아래에서 검색된 청크를 확인하세요.
+            </span>
+          </div>
+          <span className="t-12 t-meta">
+            답변 생성을 켜려면{" "}
+            <Link to="/providers" style={{ color: "var(--accent)" }}>
+              외부 LLM 키 등록
+            </Link>{" "}
+            후 Auto-Pilot에서 LLM 포함 프리셋을 골라 재인덱싱하세요.
           </span>
         </div>
       ) : (
@@ -441,8 +466,11 @@ function RetrievalRail({
               }}
             >
               <div className="row f-between f-center">
-                <span className="t-mono t-12 t-meta">
-                  #{c.rank} · score {c.score.toFixed(3)}
+                <span
+                  className="t-mono t-12 t-meta"
+                  title={`raw cosine ${c.score.toFixed(3)}`}
+                >
+                  #{c.rank} · 관련도 {(normalizeScore(c.score) * 100).toFixed(1)}%
                 </span>
                 <span className="t-12 t-meta">
                   {c.page !== null ? `p.${c.page}` : "—"}
