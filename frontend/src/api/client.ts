@@ -380,4 +380,40 @@ export const api = {
 
   exportGoldenSetUrl: (workspaceId: string, setId: string): string =>
     `${BASE}/workspaces/${workspaceId}/golden-sets/${setId}/export`,
+
+  importGoldenPairs: async (
+    workspaceId: string,
+    setId: string,
+    file: File,
+  ): Promise<{ added: number; skipped: number; errors: unknown[] }> => {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    const resp = await fetch(
+      `${BASE}/workspaces/${workspaceId}/golden-sets/${setId}/pairs/import`,
+      { method: "POST", body: fd },
+    );
+    if (!resp.ok) {
+      const body = (await resp.json().catch(() => ({}))) as { error?: ApiError };
+      throw new ApiException(
+        resp.status,
+        body.error ?? { code: "UNKNOWN", message: resp.statusText, recoverable: false },
+      );
+    }
+    return resp.json();
+  },
+
+  evaluateExperiment: (
+    workspaceId: string,
+    experimentId: string,
+    body: { golden_set_id: string; metrics?: string[]; judge_llm_id?: string | null },
+  ): Promise<{
+    task_id: string;
+    websocket_topic: string;
+    estimated_duration_seconds: number;
+    external_calls: unknown[];
+  }> =>
+    request(
+      `/workspaces/${workspaceId}/experiments/${experimentId}/evaluate`,
+      { method: "POST", json: body },
+    ),
 };

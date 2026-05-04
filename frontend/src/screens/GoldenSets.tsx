@@ -5,7 +5,7 @@
  * anchor pointing at the export URL; the browser handles the download.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { useWorkspaceStore } from "../stores/workspace";
 import { Icon, Modal, PageHeader } from "../components/ui";
@@ -39,6 +39,8 @@ export function GoldenSets(): JSX.Element {
   const [addQ, setAddQ] = useState("");
   const [addA, setAddA] = useState("");
   const [busy, setBusy] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importToast, setImportToast] = useState<string | null>(null);
 
   const refreshSets = async (): Promise<void> => {
     if (!workspaceId) return;
@@ -114,6 +116,24 @@ export function GoldenSets(): JSX.Element {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleImport = async (file: File): Promise<void> => {
+    if (!workspaceId || !activeSetId) return;
+    setBusy(true);
+    setError(null);
+    setImportToast(null);
+    try {
+      const r = await api.importGoldenPairs(workspaceId, activeSetId, file);
+      setImportToast(`+${r.added} pairs imported${r.skipped ? `, ${r.skipped} skipped` : ""}`);
+      await refreshPairs();
+      await refreshSets();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      if (importInputRef.current) importInputRef.current.value = "";
     }
   };
 
@@ -233,15 +253,40 @@ export function GoldenSets(): JSX.Element {
               + Add pair
             </button>
             {workspaceId && activeSetId && (
-              <a
-                className="btn btn-sm"
-                href={api.exportGoldenSetUrl(workspaceId, activeSetId)}
-                download
-              >
-                <Icon name="ext" size={11} /> Export CSV
-              </a>
+              <>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  style={{ display: "none" }}
+                  aria-label="import csv file"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleImport(f);
+                  }}
+                />
+                <button
+                  className="btn btn-sm"
+                  disabled={busy}
+                  onClick={() => importInputRef.current?.click()}
+                >
+                  <Icon name="ext" size={11} /> Import CSV
+                </button>
+                <a
+                  className="btn btn-sm"
+                  href={api.exportGoldenSetUrl(workspaceId, activeSetId)}
+                  download
+                >
+                  <Icon name="ext" size={11} /> Export CSV
+                </a>
+              </>
             )}
           </div>
+          {importToast && (
+            <span className="t-12 t-meta" role="status">
+              {importToast}
+            </span>
+          )}
           <div className="card">
             {pairs.length === 0 ? (
               <p

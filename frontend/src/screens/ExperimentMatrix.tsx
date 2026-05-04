@@ -6,6 +6,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useWebSocket, type WSMessage } from "../hooks/useWebSocket";
+import { Modal } from "../components/ui";
 import {
   Bar,
   BarChart,
@@ -39,6 +41,13 @@ export function ExperimentMatrix(): JSX.Element {
   const [detail, setDetail] = useState<ExperimentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [evalExp, setEvalExp] = useState<string | null>(null);
+  const [goldenSets, setGoldenSets] = useState<Array<{ id: string; name: string; pair_count: number }>>([]);
+  const [evalGoldenId, setEvalGoldenId] = useState<string>("");
+  const [evalTopic, setEvalTopic] = useState<string | null>(null);
+  const [evalStatus, setEvalStatus] = useState<string>("");
+  const [evalError, setEvalError] = useState<string | null>(null);
+  const [evalBusy, setEvalBusy] = useState(false);
 
   useEffect(() => {
     if (!workspaceId || !openExp) {
@@ -54,13 +63,83 @@ export function ExperimentMatrix(): JSX.Element {
       .finally(() => setDetailLoading(false));
   }, [workspaceId, openExp]);
 
-  useEffect(() => {
+  const refreshExperiments = async (): Promise<void> => {
     if (!workspaceId) return;
-    api
-      .listExperiments(workspaceId)
-      .then((r) => setExperiments(r.items))
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    try {
+      const r = await api.listExperiments(workspaceId);
+      setExperiments(r.items);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  useEffect(() => {
+    refreshExperiments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId || !evalExp) return;
+    api
+      .listGoldenSets(workspaceId)
+      .then((r) => {
+        setGoldenSets(r.items);
+        setEvalGoldenId(r.items[0]?.id ?? "");
+      })
+      .catch((e) => setEvalError(e instanceof Error ? e.message : String(e)));
+  }, [workspaceId, evalExp]);
+
+  const handleEvalMessage = (msg: WSMessage): void => {
+    if (msg.type === "started") {
+      setEvalStatus(`Started — ${msg.total_pairs ?? "?"} pairs`);
+    } else if (msg.type === "progress") {
+      setEvalStatus(`Progress — ${msg.completed ?? "?"} / ${msg.total ?? "?"}`);
+    } else if (msg.type === "completed") {
+      setEvalStatus("Completed.");
+      setEvalBusy(false);
+      setEvalTopic(null);
+      refreshExperiments();
+      if (openExp && workspaceId) {
+        api.getExperiment(workspaceId, openExp).then(setDetail).catch(() => {});
+      }
+    } else if (msg.type === "failed" || msg.type === "error") {
+      setEvalError(typeof msg.message === "string" ? msg.message : "Evaluation failed.");
+      setEvalBusy(false);
+      setEvalTopic(null);
+    }
+  };
+
+  useWebSocket({
+    topics: evalTopic ? [evalTopic] : [],
+    enabled: evalTopic !== null,
+    onMessage: handleEvalMessage,
+  });
+
+  const submitEvaluate = async (): Promise<void> => {
+    if (!workspaceId || !evalExp || !evalGoldenId) return;
+    setEvalBusy(true);
+    setEvalError(null);
+    setEvalStatus("Submitting…");
+    try {
+      const r = await api.evaluateExperiment(workspaceId, evalExp, {
+        golden_set_id: evalGoldenId,
+      });
+      setEvalTopic(r.websocket_topic);
+      setEvalStatus(`Queued — task ${r.task_id.slice(0, 8)}`);
+    } catch (e) {
+      setEvalError(e instanceof Error ? e.message : String(e));
+      setEvalBusy(false);
+    }
+  };
+
+  const closeEvalModal = (): void => {
+    if (evalBusy) return;
+    setEvalExp(null);
+    setEvalGoldenId("");
+    setEvalTopic(null);
+    setEvalStatus("");
+    setEvalError(null);
+  };
 
   const sorted = useMemo(() => {
     const rows = [...experiments];
@@ -213,8 +292,73 @@ export function ExperimentMatrix(): JSX.Element {
               {detailError}
             </p>
           )}
-          {detail && <DetailBody detail={detail} />}
+          {detail && (
+            <>
+              <div className="row gap-8" style={{ marginBottom: 16 }}>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => setEvalExp(openExp)}
+                >
+                  Evaluate with golden set
+                </button>
+              </div>
+              <DetailBody detail={detail} />
+            </>
+          )}
         </Drawer>
+      )}
+
+      {evalExp && (
+        <Modal
+          title={`Evaluate ${evalExp.slice(0, 14)}`}
+          onClose={closeEvalModal}
+          footer={
+            <>
+              <button className="btn" onClick={closeEvalModal} disabled={evalBusy}>
+                Close
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={submitEvaluate}
+                disabled={evalBusy || !evalGoldenId}
+              >
+                {evalBusy ? "Running…" : "Run"}
+              </button>
+            </>
+          }
+        >
+          <label className="t-label" style={{ display: "block", marginBottom: 8 }}>
+            Golden set
+          </label>
+          {goldenSets.length === 0 ? (
+            <p className="t-meta t-13">
+              No golden sets in this workspace. <Link to="/golden-sets">Create one →</Link>
+            </p>
+          ) : (
+            <select
+              className="input"
+              value={evalGoldenId}
+              onChange={(e) => setEvalGoldenId(e.target.value)}
+              disabled={evalBusy}
+            >
+              {goldenSets.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name} ({g.pair_count} pairs)
+                </option>
+              ))}
+            </select>
+          )}
+          {evalStatus && (
+            <p className="t-12 t-meta" style={{ marginTop: 12 }} role="status">
+              {evalStatus}
+            </p>
+          )}
+          {evalError && (
+            <p className="t-12" style={{ color: "var(--error)", marginTop: 12 }}>
+              {evalError}
+            </p>
+          )}
+        </Modal>
       )}
 
       {sorted.length > 0 && (
