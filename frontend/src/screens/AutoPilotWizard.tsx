@@ -392,7 +392,10 @@ function DiagnosticStrip({ profile }: { profile: SystemProfileResponse }): JSX.E
     { label: "CPU", value: profile.cpu.model },
     {
       label: "RAM",
-      value: `${profile.ram.available_gb ?? "?"} / ${profile.ram.total_gb} GB`,
+      value:
+        profile.ram.available_gb !== null && profile.ram.available_gb !== undefined
+          ? `${profile.ram.available_gb} / ${profile.ram.total_gb} GB`
+          : `${profile.ram.total_gb} GB`,
     },
     { label: "GPU", value: profile.gpu.name ?? "—" },
     { label: "Backend", value: profile.gpu.acceleration_backend, accent: true },

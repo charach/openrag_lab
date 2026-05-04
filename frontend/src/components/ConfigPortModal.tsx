@@ -40,7 +40,17 @@ export function ConfigPortModal({ workspaceId, onClose, onImported }: Props): JS
     setPreviewError(null);
     fetch(`/api/workspaces/${workspaceId}/config/export?format=${format}`)
       .then(async (r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        if (!r.ok) {
+          const body = await r.text().catch(() => "");
+          let friendly: string | null = null;
+          try {
+            const parsed = JSON.parse(body);
+            friendly = parsed?.error?.message ?? parsed?.detail ?? null;
+          } catch {
+            /* not json */
+          }
+          throw new Error(friendly ?? `HTTP ${r.status}`);
+        }
         return r.text();
       })
       .then(setPreview)

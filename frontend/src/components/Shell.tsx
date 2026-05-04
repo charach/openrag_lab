@@ -148,13 +148,20 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
         }}
       >
         {/* Wordmark */}
-        <div
+        <button
+          type="button"
+          aria-label="OpenRAG-Lab home"
+          onClick={() => navigate("/")}
           style={{
             display: "flex",
             alignItems: "center",
             padding: "0 24px",
             borderRight: "1px solid var(--border)",
             minWidth: 220,
+            background: "transparent",
+            border: 0,
+            cursor: "pointer",
+            fontFamily: "inherit",
           }}
         >
           <h1
@@ -163,7 +170,7 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
           >
             OpenRAG<span style={{ color: "var(--accent)" }}>·</span>Lab
           </h1>
-        </div>
+        </button>
 
         {/* Workspace selector */}
         <div
@@ -435,7 +442,11 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
                 <Row label="cores" value={`${profile.cpu.cores} / ${profile.cpu.threads}t`} />
                 <Row
                   label="ram"
-                  value={`${profile.ram.available_gb ?? "?"} / ${profile.ram.total_gb} GB`}
+                  value={
+                    profile.ram.available_gb !== null && profile.ram.available_gb !== undefined
+                      ? `${profile.ram.available_gb} / ${profile.ram.total_gb} GB`
+                      : `${profile.ram.total_gb} GB`
+                  }
                 />
                 <Row label="gpu" value={profile.gpu.name ?? "—"} />
                 <Row
