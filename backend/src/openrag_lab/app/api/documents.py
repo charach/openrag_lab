@@ -56,7 +56,7 @@ def _safe_filename(raw: str) -> str:
 class ChunkingPreviewBody(BaseModel):
     document_id: str | None = None
     config: dict[str, Any]
-    max_chunks: int = Field(default=50, ge=1, le=200)
+    max_chunks: int = Field(default=50, ge=1, le=2000)
 
 
 class RenameDocumentBody(BaseModel):
@@ -450,6 +450,7 @@ async def chunking_preview(
             }
         )
 
+    document_total_chars = len(full_text)
     if previews:
         token_lengths = [len(p.content) for p in previews]
         avg = sum(token_lengths) / len(token_lengths)
@@ -458,6 +459,7 @@ async def chunking_preview(
             "avg_token_count": round(avg, 1),
             "min_token_count": min(token_lengths),
             "max_token_count": max(token_lengths),
+            "document_total_chars": document_total_chars,
         }
     else:
         stats = {
@@ -465,6 +467,7 @@ async def chunking_preview(
             "avg_token_count": 0,
             "min_token_count": 0,
             "max_token_count": 0,
+            "document_total_chars": document_total_chars,
         }
 
     return {

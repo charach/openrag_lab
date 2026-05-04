@@ -131,6 +131,7 @@ export interface ChunkPreviewResponse {
     avg_token_count: number;
     min_token_count: number;
     max_token_count: number;
+    document_total_chars?: number;
   };
 }
 

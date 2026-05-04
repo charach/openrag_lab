@@ -164,6 +164,7 @@ def test_chunking_preview_recursive(app_state: AppState) -> None:
     assert len(body["chunks"]) >= 1
     assert all("color_hint" in c and c["color_hint"].startswith("hsl") for c in body["chunks"])
     assert body["stats"]["total_chunks_estimated"] == len(body["chunks"])
+    assert body["stats"]["document_total_chars"] == len(text)
     assert len(body["config_key"]) == 16
 
 

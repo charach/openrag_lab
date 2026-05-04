@@ -35,6 +35,7 @@ export function ChunkingLab(): JSX.Element {
   const [presets, setPresets] = useState<PresetEntry[]>([]);
   const [confirmRun, setConfirmRun] = useState(false);
   const [runPending, setRunPending] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(50);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -113,7 +114,7 @@ export function ChunkingLab(): JSX.Element {
         .chunkingPreview(workspaceId, {
           document_id: docId,
           config: { strategy, chunk_size: chunkSize, chunk_overlap: chunkOverlap },
-          max_chunks: 24,
+          max_chunks: visibleCount,
         })
         .then((r) => {
           setPreview(r);
@@ -123,7 +124,22 @@ export function ChunkingLab(): JSX.Element {
         .finally(() => setLoading(false));
     }, 200);
     return () => window.clearTimeout(handle);
-  }, [workspaceId, docId, strategy, chunkSize, chunkOverlap]);
+  }, [workspaceId, docId, strategy, chunkSize, chunkOverlap, visibleCount]);
+
+  // When config changes, reset paging — old visibleCount is meaningless under
+  // a new chunk size.
+  useEffect(() => {
+    setVisibleCount(50);
+  }, [docId, strategy, chunkSize, chunkOverlap]);
+
+  const documentTotalChars = preview?.stats?.document_total_chars ?? 0;
+  // #10: cap chunk_size by min(전체 문서, 2000). Default 32-step still applies.
+  const dynamicChunkSizeMax = Math.max(
+    64,
+    Math.min(2000, documentTotalChars > 0 ? documentTotalChars : 2000),
+  );
+  // Round up to nearest step (32) so the slider hits a clean stop.
+  const chunkSizeMax = Math.ceil(dynamicChunkSizeMax / 32) * 32;
 
   const stats = useMemo(() => preview?.stats, [preview]);
 
@@ -165,7 +181,8 @@ export function ChunkingLab(): JSX.Element {
           setDocId={setDocId}
           strategy={strategy}
           setStrategy={setStrategy}
-          chunkSize={chunkSize}
+          chunkSize={Math.min(chunkSize, chunkSizeMax)}
+          chunkSizeMax={chunkSizeMax}
           setChunkSize={(v) => {
             setChunkSize(v);
             if (chunkOverlap > Math.floor(v / 2)) setChunkOverlap(Math.floor(v / 2));
@@ -190,7 +207,11 @@ export function ChunkingLab(): JSX.Element {
             </div>
           )}
           <ChunkStrip preview={preview} />
-          <ChunkList preview={preview} />
+          <ChunkProse
+            preview={preview}
+            visibleCount={visibleCount}
+            onLoadMore={() => setVisibleCount((n) => n + 50)}
+          />
         </div>
       </div>
       {confirmRun && (
@@ -255,6 +276,7 @@ function ControlsPanel(props: {
   strategy: Strategy;
   setStrategy: (s: Strategy) => void;
   chunkSize: number;
+  chunkSizeMax: number;
   setChunkSize: (n: number) => void;
   chunkOverlap: number;
   setChunkOverlap: (n: number) => void;
@@ -305,7 +327,7 @@ function ControlsPanel(props: {
         label="chunk_size"
         value={props.chunkSize}
         min={32}
-        max={2048}
+        max={props.chunkSizeMax}
         step={32}
         onChange={props.setChunkSize}
       />
@@ -422,7 +444,22 @@ function ChunkStrip({ preview }: { preview: ChunkPreviewResponse | null }): JSX.
   );
 }
 
-function ChunkList({ preview }: { preview: ChunkPreviewResponse | null }): JSX.Element | null {
+/**
+ * Renders chunk previews as a single flowing prose where each chunk
+ * contributes an inline span underlined in its color. The underline
+ * makes boundaries visible without breaking the reading flow into boxes,
+ * and overlapping regions appear naturally as the duplicated text
+ * carries the next chunk's underline.
+ */
+function ChunkProse({
+  preview,
+  visibleCount,
+  onLoadMore,
+}: {
+  preview: ChunkPreviewResponse | null;
+  visibleCount: number;
+  onLoadMore: () => void;
+}): JSX.Element | null {
   if (!preview) return null;
   if (preview.chunks.length === 0) {
     return (
@@ -431,40 +468,60 @@ function ChunkList({ preview }: { preview: ChunkPreviewResponse | null }): JSX.E
       </p>
     );
   }
+
+  const total = preview.chunks.length;
+  const shown = Math.min(visibleCount, total);
+  const visibleChunks = preview.chunks.slice(0, shown);
+  const hasMore = total > shown;
+
   return (
-    <div className="col gap-8">
-      {preview.chunks.map((c) => (
-        <div
-          key={c.sequence}
-          className="card"
-          style={{
-            padding: "10px 14px",
-            display: "grid",
-            gridTemplateColumns: "auto 1fr auto",
-            gap: 12,
-            alignItems: "start",
-            borderLeft: `3px solid ${c.color_hint}`,
-          }}
-        >
-          <span className="t-mono t-12 t-meta" style={{ minWidth: 32 }}>
-            #{c.sequence.toString().padStart(2, "0")}
-          </span>
-          <pre
-            className="t-13"
+    <div className="col gap-12">
+      <div
+        className="card"
+        style={{
+          padding: 20,
+          background: "var(--bg-1)",
+          lineHeight: 1.95,
+          fontSize: 14,
+          color: "var(--text-0)",
+        }}
+      >
+        {visibleChunks.map((c) => (
+          <span
+            key={c.sequence}
+            title={`#${c.sequence} · offset ${c.char_offset} · ${c.char_length} chars`}
             style={{
+              borderBottom: `2px solid ${c.color_hint}`,
+              paddingBottom: 1,
+              marginRight: 2,
               whiteSpace: "pre-wrap",
-              margin: 0,
-              fontFamily: "inherit",
-              color: "var(--text-0)",
             }}
           >
-            {c.content.length > 280 ? `${c.content.slice(0, 280)}…` : c.content}
-          </pre>
-          <span className="t-mono t-12 t-meta">
-            {c.char_offset.toLocaleString()}–{(c.char_offset + c.char_length).toLocaleString()}
+            <sup
+              className="t-mono"
+              style={{
+                fontSize: 9,
+                color: "var(--text-2)",
+                marginRight: 2,
+                userSelect: "none",
+              }}
+            >
+              {c.sequence}
+            </sup>
+            {c.content}
           </span>
-        </div>
-      ))}
+        ))}
+      </div>
+      <div className="row f-between f-center">
+        <span className="t-12 t-meta">
+          {shown} / {total} chunks
+        </span>
+        {hasMore && (
+          <button className="btn btn-sm" onClick={onLoadMore}>
+            <Icon name="down" size={11} /> 더 보기 (+50)
+          </button>
+        )}
+      </div>
     </div>
   );
 }
