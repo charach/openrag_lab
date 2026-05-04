@@ -446,11 +446,27 @@ function ChunkStrip({ preview }: { preview: ChunkPreviewResponse | null }): JSX.
 
 /**
  * Renders chunk previews as a single flowing prose where each chunk
- * contributes an inline span underlined in its color. The underline
- * makes boundaries visible without breaking the reading flow into boxes,
- * and overlapping regions appear naturally as the duplicated text
- * carries the next chunk's underline.
+ * contributes an inline span tinted with its color as a translucent
+ * background. Shading (rather than an underline) keeps overlapping
+ * regions readable when adjacent chunks duplicate the same text — an
+ * underline would draw two lines under the same characters and the
+ * eye loses the boundary.
  */
+/**
+ * Mix a hex color (``#rrggbb``) with a translucent overlay suitable for
+ * inline text shading. Returns an ``rgba(...)`` string so the alpha is
+ * portable across browsers regardless of the source format.
+ */
+export function tintFromColor(hex: string, alpha: number): string {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return `rgba(120,120,120,${alpha})`;
+  const n = parseInt(m[1]!, 16);
+  const r = (n >> 16) & 0xff;
+  const g = (n >> 8) & 0xff;
+  const b = n & 0xff;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 function ChunkProse({
   preview,
   visibleCount,
@@ -491,9 +507,8 @@ function ChunkProse({
             key={c.sequence}
             title={`#${c.sequence} · offset ${c.char_offset} · ${c.char_length} chars`}
             style={{
-              borderBottom: `2px solid ${c.color_hint}`,
-              paddingBottom: 1,
-              marginRight: 2,
+              background: tintFromColor(c.color_hint, 0.22),
+              padding: "2px 0",
               whiteSpace: "pre-wrap",
             }}
           >
