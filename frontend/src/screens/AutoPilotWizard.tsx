@@ -195,7 +195,7 @@ export function AutoPilotWizard(): JSX.Element {
 
         <Step
           number="02"
-          title="Workspace + Documents"
+          title="Documents"
           status={stepStatus(2)}
           subtitle={
             files.length > 0 ? `${files.length} files · ${formatTotalSize(files)}` : undefined
@@ -204,7 +204,7 @@ export function AutoPilotWizard(): JSX.Element {
           <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 20 }}>
             <div className="col gap-12">
               <div className="col gap-6">
-                <span className="t-label">Workspace</span>
+                <span className="t-label">Target</span>
                 <div className="row gap-6">
                   <button
                     type="button"
@@ -215,18 +215,19 @@ export function AutoPilotWizard(): JSX.Element {
                       workspaces.length === 0 ? "기존 워크스페이스가 없습니다" : undefined
                     }
                   >
-                    기존 사용
+                    Index into current
                   </button>
                   <button
                     type="button"
                     className={`btn btn-sm${workspaceMode === "new" ? " btn-primary" : ""}`}
                     onClick={() => setWorkspaceMode("new")}
                   >
-                    새로 만들기
+                    Create new
                   </button>
                 </div>
                 {workspaceMode === "existing" ? (
                   <span className="t-12 t-mono" style={{ color: "var(--text-1)" }}>
+                    →{" "}
                     {workspaces.find((w) => w.id === activeWorkspaceId)?.name ??
                       (workspaces[0]?.name ?? "—")}
                   </span>
