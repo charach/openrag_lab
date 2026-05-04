@@ -56,20 +56,26 @@ pnpm install
 pnpm test                            # 3 passed 확인
 ```
 
-### 2. 개발 서버 (터미널 두 개)
+### 2. 개발 서버 — 한 번에 실행
+
+```bash
+uv run python dev.py            # 백엔드(8000) + 프런트(5173) 동시 기동, Ctrl-C 한 번이면 둘 다 정리
+uv run python dev.py --test     # 가벼운 모드 (FakeEmbedder + InMemoryVectorStore + EchoLLM)
+```
+
+브라우저에서 `http://localhost:5173` 접속 → **Auto-Pilot** 화면이 뜨면 ✓
+
+<details><summary>터미널 두 개로 따로 띄우려면</summary>
 
 ```bash
 # 터미널 A — 백엔드 (127.0.0.1:8000)
 uv run uvicorn openrag_lab.app.main:create_app --factory --reload
-```
 
-```bash
 # 터미널 B — 프런트 (http://localhost:5173)
-cd frontend
-pnpm dev
+cd frontend && pnpm dev
 ```
 
-브라우저에서 `http://localhost:5173` 접속 → **Auto-Pilot** 화면이 뜨면 ✓
+</details>
 
 ### 3. 4 화면 둘러보기
 
@@ -88,6 +94,7 @@ pnpm dev
 
 ```bash
 OPENRAG_LAB_TEST_MODE=1 uv run uvicorn openrag_lab.app.main:create_app --factory
+# 또는 한 번에: uv run python dev.py --test
 ```
 
 `FakeEmbedder` (sha256 기반 32차원 결정적 벡터) + `InMemoryVectorStore` + `EchoLLM`로 어댑터가 교체된다. API 표면은 운영과 동일.
