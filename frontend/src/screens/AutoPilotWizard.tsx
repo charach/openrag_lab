@@ -12,18 +12,22 @@ import {
   type IndexAcceptedResponse,
   type PresetResponse,
   type SystemProfileResponse,
+  type WorkspaceSummary,
 } from "../api/client";
 import { useWebSocket, type WSMessage } from "../hooks/useWebSocket";
 import { useWorkspaceStore } from "../stores/workspace";
 import { Icon, Modal, PageHeader, Step } from "../components/ui";
 
 type PresetEntry = PresetResponse["presets"][number];
+type WorkspaceMode = "existing" | "new";
 
 export function AutoPilotWizard(): JSX.Element {
   const [profile, setProfile] = useState<SystemProfileResponse | null>(null);
   const [presets, setPresets] = useState<PresetEntry[]>([]);
   const [chosen, setChosen] = useState<string | null>(null);
-  const [workspaceName, setWorkspaceName] = useState("내 자료실");
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("existing");
+  const [workspaceName, setWorkspaceName] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [task, setTask] = useState<IndexAcceptedResponse | null>(null);
   const [progress, setProgress] = useState<WSMessage | null>(null);
@@ -32,6 +36,7 @@ export function AutoPilotWizard(): JSX.Element {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelled, setCancelled] = useState(false);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const navigate = useNavigate();
 
@@ -42,6 +47,13 @@ export function AutoPilotWizard(): JSX.Element {
       const recommended = r.presets.find((p) => p.recommended);
       if (recommended) setChosen(recommended.id);
     });
+    api
+      .listWorkspaces()
+      .then((r) => {
+        setWorkspaces(r.items);
+        if (r.items.length === 0) setWorkspaceMode("new");
+      })
+      .catch(() => undefined);
   }, []);
 
   const topics = useMemo(() => (task ? [task.websocket_topic] : []), [task]);
@@ -81,10 +93,27 @@ export function AutoPilotWizard(): JSX.Element {
       return;
     }
     try {
-      const ws = await api.createWorkspace(workspaceName, preset.id);
-      setActiveWorkspace(ws.id);
-      if (files.length > 0) await api.uploadDocuments(ws.id, files);
-      const accepted = await api.startIndex(ws.id, {
+      let workspaceId: string;
+      if (workspaceMode === "existing") {
+        if (!activeWorkspaceId) {
+          setError("선택된 워크스페이스가 없습니다. 헤더에서 선택하거나 새로 만드세요.");
+          setSubmitting(false);
+          return;
+        }
+        workspaceId = activeWorkspaceId;
+      } else {
+        const trimmed = workspaceName.trim();
+        if (trimmed.length === 0) {
+          setError("워크스페이스 이름을 입력하세요.");
+          setSubmitting(false);
+          return;
+        }
+        const ws = await api.createWorkspace(trimmed, preset.id);
+        setActiveWorkspace(ws.id);
+        workspaceId = ws.id;
+      }
+      if (files.length > 0) await api.uploadDocuments(workspaceId, files);
+      const accepted = await api.startIndex(workspaceId, {
         config: {
           embedder_id: preset.config.embedder_id,
           chunking: preset.config.chunking,
@@ -149,12 +178,40 @@ export function AutoPilotWizard(): JSX.Element {
           <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 20 }}>
             <div className="col gap-12">
               <div className="col gap-6">
-                <span className="t-label">Workspace name</span>
-                <input
-                  className="input"
-                  value={workspaceName}
-                  onChange={(e) => setWorkspaceName(e.target.value)}
-                />
+                <span className="t-label">Workspace</span>
+                <div className="row gap-6">
+                  <button
+                    type="button"
+                    className={`btn btn-sm${workspaceMode === "existing" ? " btn-primary" : ""}`}
+                    onClick={() => setWorkspaceMode("existing")}
+                    disabled={workspaces.length === 0}
+                    title={
+                      workspaces.length === 0 ? "기존 워크스페이스가 없습니다" : undefined
+                    }
+                  >
+                    기존 사용
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn-sm${workspaceMode === "new" ? " btn-primary" : ""}`}
+                    onClick={() => setWorkspaceMode("new")}
+                  >
+                    새로 만들기
+                  </button>
+                </div>
+                {workspaceMode === "existing" ? (
+                  <span className="t-12 t-mono" style={{ color: "var(--text-1)" }}>
+                    {workspaces.find((w) => w.id === activeWorkspaceId)?.name ??
+                      (workspaces[0]?.name ?? "—")}
+                  </span>
+                ) : (
+                  <input
+                    className="input"
+                    placeholder="새 워크스페이스 이름"
+                    value={workspaceName}
+                    onChange={(e) => setWorkspaceName(e.target.value)}
+                  />
+                )}
               </div>
               {chosen && (
                 <div className="col gap-6">
@@ -180,7 +237,13 @@ export function AutoPilotWizard(): JSX.Element {
             <button
               className="btn btn-primary"
               onClick={launch}
-              disabled={submitting || indexing || !chosen || workspaceName.length === 0}
+              disabled={
+                submitting ||
+                indexing ||
+                !chosen ||
+                (workspaceMode === "new" && workspaceName.trim().length === 0) ||
+                (workspaceMode === "existing" && !activeWorkspaceId && workspaces.length === 0)
+              }
             >
               {submitting ? "Starting…" : indexing ? "Indexing…" : "Start indexing"}
             </button>

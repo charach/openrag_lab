@@ -59,7 +59,9 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
     refreshWorkspaces()
       .then((items) => {
         const first = items[0];
-        if (!activeId && first) setActive(first.id);
+        const stillExists = activeId && items.some((w) => w.id === activeId);
+        if (!stillExists && first) setActive(first.id);
+        else if (!first) setActive(null);
       })
       .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
