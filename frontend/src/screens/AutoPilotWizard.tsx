@@ -9,14 +9,21 @@ import { useEffect, useMemo, useState, type DragEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   api,
-  type IndexAcceptedResponse,
   type PresetResponse,
   type SystemProfileResponse,
   type WorkspaceSummary,
 } from "../api/client";
-import { useWebSocket, type WSMessage } from "../hooks/useWebSocket";
+import { useWebSocket } from "../hooks/useWebSocket";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useIndexingStore } from "../stores/indexing";
 import { Icon, Modal, PageHeader, Step } from "../components/ui";
+
+const ACCEPTED_EXTENSIONS = [".pdf", ".txt", ".md", ".markdown"];
+
+function isAcceptedExtension(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  return ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
 
 type PresetEntry = PresetResponse["presets"][number];
 type WorkspaceMode = "existing" | "new";
@@ -29,15 +36,13 @@ export function AutoPilotWizard(): JSX.Element {
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("existing");
   const [workspaceName, setWorkspaceName] = useState("");
   const [files, setFiles] = useState<File[]>([]);
-  const [task, setTask] = useState<IndexAcceptedResponse | null>(null);
-  const [progress, setProgress] = useState<WSMessage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelling, setCancelling] = useState(false);
-  const [cancelled, setCancelled] = useState(false);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
+  const indexing = useIndexingStore();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -56,25 +61,35 @@ export function AutoPilotWizard(): JSX.Element {
       .catch(() => undefined);
   }, []);
 
-  const topics = useMemo(() => (task ? [task.websocket_topic] : []), [task]);
-  useWebSocket({ topics, enabled: task !== null, onMessage: setProgress });
+  const topics = useMemo(
+    () => (indexing.task ? [indexing.task.websocket_topic] : []),
+    [indexing.task],
+  );
+  useWebSocket({
+    topics,
+    enabled: indexing.task !== null,
+    onMessage: (msg) => indexing.setProgress(msg),
+  });
 
-  const ratio = typeof progress?.ratio === "number" ? progress.ratio : null;
-  const stage = typeof progress?.type === "string" ? progress.type : null;
-  const indexing = task !== null;
+  const ratio = typeof indexing.progress?.ratio === "number" ? indexing.progress.ratio : null;
+  const stage = typeof indexing.progress?.type === "string" ? indexing.progress.type : null;
+  const isActive =
+    indexing.phase === "starting" || indexing.phase === "running" || indexing.phase === "done";
+  const isStarting = indexing.phase === "starting";
+  const cancelled = indexing.phase === "cancelled";
   const stepStatus = (n: 1 | 2 | 3): "todo" | "active" | "done" => {
     if (n === 1) return chosen ? "done" : "active";
-    if (n === 2) return indexing ? "done" : chosen ? "active" : "todo";
-    return indexing ? "active" : "todo";
+    if (n === 2) return isActive ? "done" : chosen ? "active" : "todo";
+    return isActive ? "active" : "todo";
   };
 
   const cancelIndex = async (): Promise<void> => {
-    if (!task) return;
+    if (!indexing.task) return;
     setCancelling(true);
     setError(null);
     try {
-      await api.cancelTask(task.task_id);
-      setCancelled(true);
+      await api.cancelTask(indexing.task.task_id);
+      indexing.markCancelled();
       setConfirmCancel(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -89,6 +104,14 @@ export function AutoPilotWizard(): JSX.Element {
     const preset = presets.find((p) => p.id === chosen);
     if (!preset) {
       setError("preset not chosen");
+      setSubmitting(false);
+      return;
+    }
+    const rejected = files.filter((f) => !isAcceptedExtension(f.name));
+    if (rejected.length > 0) {
+      setError(
+        `지원하지 않는 확장자입니다: ${rejected.map((f) => f.name).join(", ")} (허용: ${ACCEPTED_EXTENSIONS.join(", ")})`,
+      );
       setSubmitting(false);
       return;
     }
@@ -112,6 +135,7 @@ export function AutoPilotWizard(): JSX.Element {
         setActiveWorkspace(ws.id);
         workspaceId = ws.id;
       }
+      indexing.startStarting(workspaceId);
       if (files.length > 0) await api.uploadDocuments(workspaceId, files);
       const accepted = await api.startIndex(workspaceId, {
         config: {
@@ -122,9 +146,11 @@ export function AutoPilotWizard(): JSX.Element {
           llm_id: preset.config.llm_id,
         },
       });
-      setTask(accepted);
+      indexing.setTask(accepted);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      indexing.markError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -239,13 +265,13 @@ export function AutoPilotWizard(): JSX.Element {
               onClick={launch}
               disabled={
                 submitting ||
-                indexing ||
+                isActive ||
                 !chosen ||
                 (workspaceMode === "new" && workspaceName.trim().length === 0) ||
                 (workspaceMode === "existing" && !activeWorkspaceId && workspaces.length === 0)
               }
             >
-              {submitting ? "Starting…" : indexing ? "Indexing…" : "Start indexing"}
+              {submitting ? "Starting…" : isActive ? "Indexing…" : "Start indexing"}
             </button>
           </div>
         </Step>
@@ -283,19 +309,27 @@ export function AutoPilotWizard(): JSX.Element {
           </Modal>
         )}
 
-        {indexing && task && (
+        {isActive && (
           <Step
             number="03"
             title="Indexing"
             status="active"
-            subtitle={ratio !== null ? `${(ratio * 100).toFixed(1)}% · ${stage ?? "running"}` : "running"}
+            subtitle={
+              isStarting
+                ? "starting…"
+                : ratio !== null
+                ? `${(ratio * 100).toFixed(1)}% · ${stage ?? "running"}`
+                : "running"
+            }
           >
             <div className="col gap-16">
               <div className="col gap-8">
                 <div className="row f-between f-center">
                   <div className="row gap-8 f-center">
                     <span className="dot dot-gold pulse-gold"></span>
-                    <span className="t-13">{stage ?? "queued"}</span>
+                    <span className="t-13">
+                      {isStarting ? "starting…" : stage ?? "queued"}
+                    </span>
                   </div>
                   <span className="t-mono t-12" style={{ color: "var(--accent)" }}>
                     {ratio !== null ? `${(ratio * 100).toFixed(1)}%` : "…"}
@@ -315,8 +349,12 @@ export function AutoPilotWizard(): JSX.Element {
               </div>
 
               <div className="row gap-12 f-center" style={{ marginTop: 4 }}>
-                <span className="t-12 t-meta t-mono">task_id {task.task_id}</span>
-                <span className="t-12 t-meta t-mono">exp {task.experiment_id}</span>
+                {indexing.task && (
+                  <>
+                    <span className="t-12 t-meta t-mono">task_id {indexing.task.task_id}</span>
+                    <span className="t-12 t-meta t-mono">exp {indexing.task.experiment_id}</span>
+                  </>
+                )}
                 {cancelled && (
                   <span className="chip" style={{ color: "var(--error)" }}>
                     cancelled
@@ -326,7 +364,7 @@ export function AutoPilotWizard(): JSX.Element {
                 <button
                   className="btn btn-sm"
                   onClick={() => setConfirmCancel(true)}
-                  disabled={cancelled || (ratio !== null && ratio >= 0.999)}
+                  disabled={isStarting || cancelled || (ratio !== null && ratio >= 0.999)}
                   style={{ borderColor: "var(--border-strong)", color: "var(--text-1)" }}
                 >
                   <Icon name="x" size={12} /> Cancel
@@ -479,40 +517,57 @@ function DropZone({
   files: File[];
   setFiles: (f: File[]) => void;
 }): JSX.Element {
+  const [rejected, setRejected] = useState<string[]>([]);
+  const accept = (incoming: File[]): void => {
+    const ok: File[] = [];
+    const bad: string[] = [];
+    for (const f of incoming) {
+      if (isAcceptedExtension(f.name)) ok.push(f);
+      else bad.push(f.name);
+    }
+    if (ok.length > 0) setFiles([...files, ...ok]);
+    setRejected(bad);
+  };
   const onDrop = (e: DragEvent<HTMLLabelElement>): void => {
     e.preventDefault();
     const dropped = Array.from(e.dataTransfer?.files ?? []);
-    if (dropped.length > 0) setFiles([...files, ...dropped]);
+    if (dropped.length > 0) accept(dropped);
   };
   return (
-    <label
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={onDrop}
-      style={{
-        border: "1px dashed var(--border-strong)",
-        padding: "32px 24px",
-        textAlign: "center",
-        background: "var(--bg-0)",
-        cursor: "pointer",
-        display: "block",
-      }}
-    >
-      <Icon name="upload" size={20} color="var(--text-2)" />
-      <div className="t-14" style={{ marginTop: 10 }}>
-        Drop PDF · TXT · Markdown anywhere here
-      </div>
-      <div className="t-12 t-meta" style={{ marginTop: 4 }}>
-        클릭하거나 파일·폴더를 끌어다 놓으세요.
-      </div>
-      <input
-        type="file"
-        multiple
-        onChange={(e) =>
-          setFiles([...files, ...(e.target.files ? Array.from(e.target.files) : [])])
-        }
-        style={{ display: "none" }}
-      />
-    </label>
+    <div className="col gap-6">
+      <label
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={onDrop}
+        style={{
+          border: "1px dashed var(--border-strong)",
+          padding: "32px 24px",
+          textAlign: "center",
+          background: "var(--bg-0)",
+          cursor: "pointer",
+          display: "block",
+        }}
+      >
+        <Icon name="upload" size={20} color="var(--text-2)" />
+        <div className="t-14" style={{ marginTop: 10 }}>
+          Drop PDF · TXT · Markdown anywhere here
+        </div>
+        <div className="t-12 t-meta" style={{ marginTop: 4 }}>
+          클릭하거나 파일·폴더를 끌어다 놓으세요. 허용 확장자: {ACCEPTED_EXTENSIONS.join(", ")}
+        </div>
+        <input
+          type="file"
+          multiple
+          accept={ACCEPTED_EXTENSIONS.join(",")}
+          onChange={(e) => accept(e.target.files ? Array.from(e.target.files) : [])}
+          style={{ display: "none" }}
+        />
+      </label>
+      {rejected.length > 0 && (
+        <span className="t-12" style={{ color: "var(--error)" }}>
+          지원하지 않는 확장자가 무시되었습니다: {rejected.join(", ")}
+        </span>
+      )}
+    </div>
   );
 }
 
