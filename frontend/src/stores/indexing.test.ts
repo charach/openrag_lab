@@ -40,7 +40,7 @@ describe("indexing store", () => {
 
   it("setProgress before task arrival promotes starting → running", () => {
     useIndexingStore.getState().startStarting("ws_a");
-    useIndexingStore.getState().setProgress({ topic: "indexing.task_1", type: "subscribed" });
+    useIndexingStore.getState().setProgress({ topic: "indexing.task_1", type: "parsing", ratio: 0.05 });
     expect(useIndexingStore.getState().phase).toBe("running");
   });
 

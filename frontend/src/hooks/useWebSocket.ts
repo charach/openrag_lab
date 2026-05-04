@@ -43,6 +43,11 @@ export function useWebSocket({ topics, onMessage, enabled = true }: UseWebSocket
       socket.addEventListener("message", (event) => {
         try {
           const data = JSON.parse(event.data) as WSMessage;
+          // Drop connection-level acks: the server replies to subscribe/
+          // unsubscribe with control frames that carry the same envelope
+          // shape as topic events. They must not reach UI consumers, or
+          // the indexing strip happily renders "subscribed" as the stage.
+          if (data.type === "subscribed" || data.type === "unsubscribed") return;
           handlerRef.current(data);
         } catch {
           // ignore malformed payloads
