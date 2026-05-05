@@ -48,6 +48,10 @@ export function ExperimentMatrix(): JSX.Element {
   const [sortKey, setSortKey] = useState<SortKey>("started_at");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [openExp, setOpenExp] = useState<string | null>(null);
+  // FIFO A/B picks — clicking the per-row checkbox cycles values into
+  // [A, B]; a third pick replaces A so the user always sees the *latest
+  // two* in the comparison panel below.
+  const [abSelection, setAbSelection] = useState<string[]>([]);
   const [detail, setDetail] = useState<ExperimentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -151,6 +155,14 @@ export function ExperimentMatrix(): JSX.Element {
     setEvalError(null);
   };
 
+  const toggleAB = (id: string): void => {
+    setAbSelection((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length >= 2) return [prev[1]!, id];
+      return [...prev, id];
+    });
+  };
+
   const sorted = useMemo(() => {
     const rows = [...experiments];
     rows.sort((a, b) => {
@@ -219,10 +231,13 @@ export function ExperimentMatrix(): JSX.Element {
         onLaunched={refreshExperiments}
       />
 
-      <div className="card" style={{ marginTop: 32, padding: 0, overflow: "hidden" }}>
+      <MatrixDefinitionCard experiments={sorted} />
+
+      <div className="card" style={{ marginTop: 24, padding: 0, overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ borderBottom: "1px solid var(--border)" }}>
+              <Th label="A/B" />
               <Th label="Experiment" />
               <Th label="Status" />
               <Th label="Fingerprint" />
@@ -250,47 +265,113 @@ export function ExperimentMatrix(): JSX.Element {
           <tbody>
             {sorted.length === 0 ? (
               <tr>
-                <td colSpan={3 + 1 + METRICS.length} style={{ padding: 24 }}>
+                <td colSpan={4 + 1 + METRICS.length} style={{ padding: 24 }}>
                   <p className="t-meta t-13">아직 실험이 없습니다.</p>
                 </td>
               </tr>
             ) : (
-              sorted.map((e) => (
-                <tr
-                  key={e.id}
-                  onClick={() => setOpenExp(e.id)}
-                  style={{
-                    borderBottom: "1px solid var(--border)",
-                    cursor: "pointer",
-                    background: openExp === e.id ? "var(--bg-2)" : undefined,
-                  }}
-                >
-                  <Td>
-                    <span className="t-13">{e.id.slice(0, 14)}</span>
-                  </Td>
-                  <Td>
-                    <span className="chip" style={{ color: statusColor(e.status) }}>
-                      <span className="dot" style={{ background: statusColor(e.status) }}></span>
-                      {e.status}
-                    </span>
-                  </Td>
-                  <Td>
-                    <span className="t-mono t-12 t-meta">
-                      {e.config_fingerprint.slice(0, 12)}
-                    </span>
-                  </Td>
-                  <Td align="right">
-                    <span className="t-mono t-12 t-meta">
-                      {formatDate(e.started_at)}
-                    </span>
-                  </Td>
-                  {METRICS.map((m) => (
-                    <Td key={m} align="right">
-                      <ScoreCell value={e.scores[m]} />
+              sorted.map((e) => {
+                const archived = e.status === "archived";
+                const abIndex = abSelection.indexOf(e.id);
+                const abLabel = abIndex === 0 ? "A" : abIndex === 1 ? "B" : null;
+                return (
+                  <tr
+                    key={e.id}
+                    onClick={() => setOpenExp(e.id)}
+                    style={{
+                      borderBottom: "1px solid var(--border)",
+                      cursor: "pointer",
+                      background:
+                        openExp === e.id
+                          ? "var(--bg-2)"
+                          : abLabel
+                            ? "var(--bg-2)"
+                            : undefined,
+                      opacity: archived ? 0.45 : 1,
+                    }}
+                  >
+                    <Td>
+                      <button
+                        type="button"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          if (!archived) toggleAB(e.id);
+                        }}
+                        disabled={archived}
+                        title={
+                          archived
+                            ? "Archived experiments can't be added to A/B"
+                            : abLabel
+                              ? `Selected as ${abLabel}`
+                              : "Pick for A/B compare"
+                        }
+                        style={{
+                          width: 22,
+                          height: 22,
+                          border:
+                            "1px solid " +
+                            (abLabel ? "var(--accent)" : "var(--border-strong)"),
+                          background: abLabel ? "var(--accent)" : "transparent",
+                          color: "#0A0A0A",
+                          fontFamily: "JetBrains Mono, monospace",
+                          fontSize: 11,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          cursor: archived ? "default" : "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        {abLabel ?? ""}
+                      </button>
                     </Td>
-                  ))}
-                </tr>
-              ))
+                    <Td>
+                      <div className="row gap-8 f-center">
+                        <span
+                          className="t-mono t-13"
+                          style={{
+                            color: archived ? "var(--text-2)" : "var(--accent)",
+                          }}
+                        >
+                          {e.id.slice(0, 14)}
+                        </span>
+                        {archived && (
+                          <span className="chip" style={{ fontSize: 9 }}>
+                            <Icon name="archive" size={9} /> archived
+                          </span>
+                        )}
+                      </div>
+                    </Td>
+                    <Td>
+                      <span
+                        className="chip"
+                        style={{ color: statusColor(e.status) }}
+                      >
+                        <span
+                          className="dot"
+                          style={{ background: statusColor(e.status) }}
+                        ></span>
+                        {e.status}
+                      </span>
+                    </Td>
+                    <Td>
+                      <span className="t-mono t-12 t-meta">
+                        {e.config_fingerprint.slice(0, 12)}
+                      </span>
+                    </Td>
+                    <Td align="right">
+                      <span className="t-mono t-12 t-meta">
+                        {formatDate(e.started_at)}
+                      </span>
+                    </Td>
+                    {METRICS.map((m) => (
+                      <Td key={m} align="right">
+                        <ScoreCell value={e.scores[m]} />
+                      </Td>
+                    ))}
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -376,11 +457,19 @@ export function ExperimentMatrix(): JSX.Element {
         </Modal>
       )}
 
+      {abSelection.length === 2 && (
+        <ABSummaryCard
+          a={experiments.find((e) => e.id === abSelection[0]) ?? null}
+          b={experiments.find((e) => e.id === abSelection[1]) ?? null}
+          onClear={() => setAbSelection([])}
+        />
+      )}
+
       {sorted.length > 0 && (
         <div className="card" style={{ marginTop: 24, padding: 20 }}>
           <div className="row f-between f-center" style={{ marginBottom: 12 }}>
-            <span className="t-label">A / B Compare</span>
-            <span className="t-12 t-meta">top 5 by sort order</span>
+            <span className="t-label">All experiments · top 5</span>
+            <span className="t-12 t-meta">A/B 체크박스로 선택해 위에서 비교하세요.</span>
           </div>
           <GoldenSetPreview workspaceId={workspaceId} />
           <div style={{ height: 1, background: "var(--border)", margin: "16px 0" }}></div>
@@ -511,6 +600,7 @@ function DetailBody({ detail }: { detail: ExperimentDetail }): JSX.Element {
           ))}
         </div>
       </div>
+      <PerPairSampling pairs={detail.pair_results as Array<Record<string, unknown>>} />
       <div className="col gap-8">
         <span className="t-label">Performance</span>
         <div
@@ -866,6 +956,212 @@ function statusColor(status: string): string {
   if (status === "failed") return "var(--error)";
   if (status === "running" || status === "queued") return "var(--accent)";
   return "var(--text-2)";
+}
+
+/**
+ * Tabular per-pair sample of the most recent evaluation. ``pair_results``
+ * comes back from the experiments API as a list of dicts; we treat the
+ * shape leniently (some fields may be absent depending on retrieval-only
+ * vs full RAG mode) and only render the keys we recognise.
+ */
+function PerPairSampling({
+  pairs,
+}: {
+  pairs: Array<Record<string, unknown>>;
+}): JSX.Element | null {
+  if (!pairs || pairs.length === 0) return null;
+  const sample = pairs.slice(0, 5);
+  const cellNumber = (v: unknown): number | null => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    return null;
+  };
+  return (
+    <div className="col gap-8">
+      <span className="t-label">Scores · per-pair sampling</span>
+      <div
+        className="card"
+        style={{
+          padding: 0,
+          background: "var(--bg-2)",
+          border: "1px solid var(--border)",
+        }}
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 60px 60px 60px 60px",
+            padding: "8px 12px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <span className="t-label" style={{ fontSize: 9 }}>
+            Question
+          </span>
+          {["F", "AR", "CP", "CR"].map((k) => (
+            <span
+              key={k}
+              className="t-label"
+              style={{ fontSize: 9, textAlign: "right" }}
+            >
+              {k}
+            </span>
+          ))}
+        </div>
+        {sample.map((row, i) => {
+          const q =
+            (typeof row.question === "string" && row.question) ||
+            (typeof row.expected_answer === "string" && row.expected_answer) ||
+            `pair #${i + 1}`;
+          return (
+            <div
+              key={i}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 60px 60px 60px 60px",
+                padding: "6px 12px",
+                borderTop: i ? "1px solid var(--border)" : "none",
+                alignItems: "center",
+              }}
+            >
+              <span className="t-12 t-dim">{String(q).slice(0, 60)}</span>
+              <ScoreCell value={cellNumber(row.faithfulness)} />
+              <ScoreCell value={cellNumber(row.answer_relevance)} />
+              <ScoreCell value={cellNumber(row.context_precision)} />
+              <ScoreCell value={cellNumber(row.context_recall)} />
+            </div>
+          );
+        })}
+      </div>
+      {pairs.length > sample.length && (
+        <span className="t-12 t-meta">
+          showing {sample.length} of {pairs.length}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Read-only summary of what a batch run *would* sweep across, derived
+ * from existing experiments in the workspace. Backend doesn't expose
+ * /experiments/batch yet (P1) — once it does, this card grows the
+ * matching Run batch button + BatchSessionBar.
+ */
+function MatrixDefinitionCard({
+  experiments,
+}: {
+  experiments: ExperimentSummary[];
+}): JSX.Element | null {
+  if (experiments.length === 0) return null;
+  // We don't have detail.config on the summary, so derive an
+  // approximation from the fingerprint count — each unique fp is one
+  // combo. Detail mode would tell us the actual dim breakdown but
+  // that requires N round-trips; keep it simple.
+  const combos = new Set(experiments.map((e) => e.config_fingerprint)).size;
+  return (
+    <section className="card" style={{ padding: 20, marginTop: 32 }}>
+      <div className="row f-between f-center" style={{ marginBottom: 12 }}>
+        <div className="row gap-12 f-center">
+          <span className="t-label">Matrix definition</span>
+          <span className="t-mono t-12" style={{ color: "var(--accent)" }}>
+            {combos} combos · {experiments.length} runs
+          </span>
+        </div>
+        <span
+          className="t-12 t-meta"
+          title="Batch sweep API (P1) lands once /experiments/batch ships. Today the matrix is a read-only view of what's already in the workspace."
+        >
+          Run batch — coming with /experiments/batch (P1)
+        </span>
+      </div>
+      <div className="t-12 t-meta" style={{ lineHeight: 1.5 }}>
+        지금은 기존 실험들의 fingerprint 분포만 보여줍니다. 백엔드의 batch
+        엔드포인트가 들어오면 차원별 토글과 진행률 바가 추가됩니다.
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Side-by-side score diff for two picked experiments. Wins/losses use
+ * a 0.02 threshold so trivial noise doesn't flood either column.
+ */
+function ABSummaryCard({
+  a,
+  b,
+  onClear,
+}: {
+  a: ExperimentSummary | null;
+  b: ExperimentSummary | null;
+  onClear: () => void;
+}): JSX.Element | null {
+  if (!a || !b) return null;
+  interface DiffRow {
+    label: string;
+    delta: number;
+  }
+  const diffs: DiffRow[] = [];
+  for (const m of METRICS) {
+    const av = a.scores[m];
+    const bv = b.scores[m];
+    if (av !== null && bv !== null) {
+      diffs.push({ label: m, delta: av - bv });
+    }
+  }
+  const wins = diffs.filter((d) => d.delta > 0.02);
+  const losses = diffs.filter((d) => d.delta < -0.02);
+  return (
+    <section className="card" style={{ padding: 20, marginTop: 24 }}>
+      <div className="row f-between f-center" style={{ marginBottom: 14 }}>
+        <div className="row gap-12 f-center">
+          <span className="t-label">A / B Compare</span>
+          <span className="row gap-6 f-center t-12" style={{ color: "var(--text-1)" }}>
+            <span style={{ width: 10, height: 10, background: "var(--accent)" }}></span>
+            A · {a.id.slice(0, 10)}
+          </span>
+          <span className="row gap-6 f-center t-12" style={{ color: "var(--text-1)" }}>
+            <span style={{ width: 10, height: 10, background: "var(--text-1)" }}></span>
+            B · {b.id.slice(0, 10)}
+          </span>
+        </div>
+        <button className="btn btn-sm" onClick={onClear}>
+          Clear A/B
+        </button>
+      </div>
+      <div className="row gap-32" style={{ flexWrap: "wrap" }}>
+        <div className="col gap-6">
+          <span className="t-label" style={{ color: "var(--accent)" }}>
+            A wins
+          </span>
+          {wins.length === 0 ? (
+            <span className="t-13 t-meta">—</span>
+          ) : (
+            wins.map((w) => (
+              <span key={w.label} className="t-13 t-mono">
+                {w.label} +{w.delta.toFixed(2)}
+              </span>
+            ))
+          )}
+        </div>
+        <div className="col gap-6">
+          <span className="t-label">A loses</span>
+          {losses.length === 0 ? (
+            <span className="t-13 t-meta">—</span>
+          ) : (
+            losses.map((w) => (
+              <span
+                key={w.label}
+                className="t-13 t-mono"
+                style={{ color: "var(--text-1)" }}
+              >
+                {w.label} {w.delta.toFixed(2)}
+              </span>
+            ))
+          )}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function formatDate(iso: string): string {
