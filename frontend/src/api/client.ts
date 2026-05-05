@@ -126,6 +126,8 @@ export interface DocumentItem {
   content_hash: string;
   added_at: string;
   indexing_status: string;
+  /** Number of chunks produced by indexing. 0 when not yet indexed. */
+  chunk_count?: number;
 }
 
 export interface ChunkPreviewItem {

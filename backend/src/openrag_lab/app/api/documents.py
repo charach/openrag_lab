@@ -98,7 +98,9 @@ async def _save_and_hash(target: Path, source: UploadFile) -> tuple[int, str]:
     return size, digest.hexdigest()
 
 
-def _serialize_document(doc: Document, *, indexing_status: str) -> dict[str, Any]:
+def _serialize_document(
+    doc: Document, *, indexing_status: str, chunk_count: int = 0
+) -> dict[str, Any]:
     return {
         "id": str(doc.id),
         "filename": doc.source_path.name,
@@ -107,6 +109,7 @@ def _serialize_document(doc: Document, *, indexing_status: str) -> dict[str, Any
         "content_hash": f"sha256:{doc.content_hash}",
         "added_at": doc.added_at.isoformat(),
         "indexing_status": indexing_status,
+        "chunk_count": chunk_count,
     }
 
 
@@ -128,7 +131,9 @@ async def list_documents(
             ).fetchone()
             total = int(row["n"]) if row else 0
             status_str = "indexed" if total > 0 else "not_indexed"
-            items.append(_serialize_document(doc, indexing_status=status_str))
+            items.append(
+                _serialize_document(doc, indexing_status=status_str, chunk_count=total)
+            )
     return {"items": items, "next_cursor": None}
 
 

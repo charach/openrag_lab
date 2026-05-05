@@ -3,6 +3,11 @@
  *
  * Re-index is implemented by calling /index with the selected document_ids
  * and force_reindex=true; that already exists in Phase 4.
+ *
+ * The 5-stat header up top mirrors the design — Documents / Indexed / In
+ * progress / Queued / Total chunks. They're derived from
+ * ``DocumentItem.indexing_status`` + ``chunk_count`` so the same list
+ * fetch powers both header and table.
  */
 
 import { useEffect, useMemo, useState, type DragEvent } from "react";
@@ -13,6 +18,14 @@ import {
   type PresetResponse,
   type WorkspaceConfig,
 } from "../api/client";
+import {
+  ExportModal,
+  mimeFor,
+  triggerDownload,
+  type ExportFormat,
+} from "../components/modals/ExportModal";
+import { confirmModal, useModal } from "../components/providers/ModalProvider";
+import { useToast } from "../components/providers/ToastProvider";
 import { useWorkspaceStore } from "../stores/workspace";
 import { FormatTag, Icon, Modal, PageHeader } from "../components/ui";
 
@@ -21,6 +34,8 @@ type PresetEntry = PresetResponse["presets"][number];
 export function Library(): JSX.Element {
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const navigate = useNavigate();
+  const modal = useModal();
+  const toast = useToast();
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -28,8 +43,6 @@ export function Library(): JSX.Element {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [renameTarget, setRenameTarget] = useState<DocumentItem | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState<DocumentItem[] | null>(null);
-  const [confirmReindex, setConfirmReindex] = useState<DocumentItem[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [workspaceConfig, setWorkspaceConfig] = useState<WorkspaceConfig | null>(null);
   const [presets, setPresets] = useState<PresetEntry[]>([]);
@@ -80,6 +93,37 @@ export function Library(): JSX.Element {
     [documents],
   );
 
+  const stats = useMemo(() => {
+    let indexed = 0;
+    let inProgress = 0;
+    let queued = 0;
+    let totalChunks = 0;
+    for (const d of documents) {
+      totalChunks += d.chunk_count ?? 0;
+      switch (d.indexing_status) {
+        case "indexed":
+          indexed++;
+          break;
+        case "embedding":
+        case "chunking":
+        case "parsing":
+          inProgress++;
+          break;
+        case "queued":
+        case "not_indexed":
+          queued++;
+          break;
+      }
+    }
+    return {
+      documents: documents.length,
+      indexed,
+      inProgress,
+      queued,
+      totalChunks,
+    };
+  }, [documents]);
+
   const baseConfig = useMemo(() => {
     if (workspaceConfig?.embedder_id) {
       return {
@@ -128,6 +172,7 @@ export function Library(): JSX.Element {
       setRenameTarget(null);
       setRenameDraft("");
       await refresh();
+      toast.push({ eyebrow: "Renamed", message: `${renameDraft} saved.` });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -135,50 +180,126 @@ export function Library(): JSX.Element {
     }
   };
 
-  const submitDelete = async (): Promise<void> => {
-    if (!workspaceId || !confirmDelete) return;
-    setBusy(true);
-    setError(null);
-    try {
-      for (const d of confirmDelete) {
-        await api.deleteDocument(workspaceId, d.id);
-      }
-      setConfirmDelete(null);
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+  const askDelete = (targets: DocumentItem[]): void => {
+    confirmModal(modal, {
+      title:
+        targets.length === 1 && targets[0]
+          ? `Delete "${targets[0].filename}"?`
+          : `Delete ${targets.length} documents?`,
+      message:
+        "이 작업은 되돌릴 수 없습니다. 인덱스에서 영구 삭제되며 관련된 청크와 임베딩도 함께 삭제됩니다.",
+      confirmLabel: "Delete",
+      danger: true,
+      onConfirm: async () => {
+        if (!workspaceId) return;
+        try {
+          for (const d of targets) {
+            await api.deleteDocument(workspaceId, d.id);
+          }
+          await refresh();
+          toast.push({
+            eyebrow: "Deleted",
+            message: `${targets.length} document${targets.length > 1 ? "s" : ""} removed.`,
+            kind: "error",
+          });
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      },
+    });
   };
 
-  const submitReindex = async (): Promise<void> => {
-    if (!workspaceId || !confirmReindex || !baseConfig) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.startIndex(workspaceId, {
-        config: {
-          embedder_id: baseConfig.embedder_id!,
-          chunking: {
-            strategy: baseConfig.chunking.strategy ?? "recursive",
-            chunk_size: baseConfig.chunking.chunk_size ?? 512,
-            chunk_overlap: baseConfig.chunking.chunk_overlap ?? 64,
-          },
-          retrieval_strategy: baseConfig.retrieval_strategy,
-          top_k: baseConfig.top_k,
-          llm_id: baseConfig.llm_id,
-        },
-        document_ids: confirmReindex.map((d) => d.id),
-        force_reindex: true,
+  const askReindex = (targets: DocumentItem[]): void => {
+    if (!baseConfig) {
+      toast.push({
+        eyebrow: "Cannot re-index",
+        message: "No workspace config or preset available to drive the re-index.",
+        kind: "error",
       });
-      setConfirmReindex(null);
-      navigate("/");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
+      return;
     }
+    confirmModal(modal, {
+      title: `Re-index ${targets.length} document${targets.length > 1 ? "s" : ""}?`,
+      message:
+        "선택한 문서를 다시 청킹·임베딩합니다. 기존 청크는 새 결과로 덮어쓰여집니다.",
+      confirmLabel: "Re-index",
+      onConfirm: async () => {
+        if (!workspaceId) return;
+        try {
+          await api.startIndex(workspaceId, {
+            config: {
+              embedder_id: baseConfig.embedder_id!,
+              chunking: {
+                strategy: baseConfig.chunking.strategy ?? "recursive",
+                chunk_size: baseConfig.chunking.chunk_size ?? 512,
+                chunk_overlap: baseConfig.chunking.chunk_overlap ?? 64,
+              },
+              retrieval_strategy: baseConfig.retrieval_strategy,
+              top_k: baseConfig.top_k,
+              llm_id: baseConfig.llm_id,
+            },
+            document_ids: targets.map((d) => d.id),
+            force_reindex: true,
+          });
+          toast.push({
+            eyebrow: "Started",
+            message: `Re-indexing ${targets.length} files.`,
+          });
+          navigate("/");
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      },
+    });
+  };
+
+  const openExport = (): void => {
+    modal.open({
+      title: "Export document list",
+      eyebrow: `Library · ${documents.length} documents`,
+      width: 600,
+      render: ({ close }) => (
+        <ExportModal
+          defaults={{
+            format: "csv",
+            filename: `library-${workspaceId}`,
+            path: `~/openrag-lab/exports/${workspaceId}`,
+            formats: ["csv", "json", "yaml"],
+            sectionsConfig: [
+              {
+                id: "meta",
+                label: "File metadata",
+                note: "name, size, format",
+                size: "—",
+                required: true,
+              },
+              {
+                id: "status",
+                label: "Indexing status",
+                note: "indexing_status, chunk_count",
+                size: "—",
+              },
+              {
+                id: "checksums",
+                label: "Content hashes",
+                note: "SHA-256 per file",
+                size: "—",
+              },
+            ],
+            includes: { meta: true, status: true, checksums: false },
+          }}
+          preview={(fmt, inc) => buildPreview(documents, fmt, inc, workspaceId ?? "")}
+          onSave={({ format, filename, body }) => {
+            triggerDownload(`${filename}.${format}`, body, mimeFor(format));
+            toast.push({
+              eyebrow: "Exported",
+              message: `${filename}.${format} downloaded.`,
+            });
+          }}
+          close={close}
+        />
+      ),
+    });
   };
 
   const handleUpload = async (files: File[]): Promise<void> => {
@@ -188,6 +309,10 @@ export function Library(): JSX.Element {
     try {
       await api.uploadDocuments(workspaceId, files);
       await refresh();
+      toast.push({
+        eyebrow: "Queued",
+        message: `${files.length} file${files.length > 1 ? "s" : ""} added.`,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -206,13 +331,23 @@ export function Library(): JSX.Element {
 
   return (
     <section className="page">
-      <PageHeader
-        eyebrow="Library"
-        title="The corpus, every document accountable."
-        sub="문서를 검색·정리·재인덱스하세요. 일괄 선택 후 한 번에 처리할 수 있습니다."
-      />
+      <div className="row f-between" style={{ alignItems: "flex-start", gap: 24 }}>
+        <PageHeader
+          eyebrow="Library"
+          title="The corpus, every document accountable."
+          sub="문서를 검색·정리·재인덱스하세요. 일괄 선택 후 한 번에 처리할 수 있습니다."
+        />
+        <div className="row gap-8">
+          <button className="btn btn-sm" onClick={openExport} disabled={!documents.length}>
+            <Icon name="yaml" size={11} /> Export list
+          </button>
+        </div>
+      </div>
 
       <div className="col gap-16" style={{ marginTop: 32 }}>
+        {/* 5-stat strip */}
+        <StatStrip stats={stats} />
+
         <DropZone
           drag={drag}
           setDrag={setDrag}
@@ -224,7 +359,7 @@ export function Library(): JSX.Element {
           <div style={{ position: "relative", flex: 1, minWidth: 240 }}>
             <input
               className="input"
-              placeholder="Search by filename"
+              placeholder="Filter by filename…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               style={{ paddingLeft: 32 }}
@@ -232,7 +367,7 @@ export function Library(): JSX.Element {
             <span
               style={{
                 position: "absolute",
-                left: 10,
+                left: 11,
                 top: "50%",
                 transform: "translateY(-50%)",
                 pointerEvents: "none",
@@ -241,53 +376,55 @@ export function Library(): JSX.Element {
               <Icon name="search" size={12} color="var(--text-2)" />
             </span>
           </div>
-          <div className="row gap-6">
-            <button
-              className="btn btn-sm"
+          <div className="row gap-1">
+            <FilterBtn
+              label="All"
+              active={formatFilter === null}
               onClick={() => setFormatFilter(null)}
-              style={{
-                borderColor: formatFilter === null ? "var(--accent)" : undefined,
-                color: formatFilter === null ? "var(--accent)" : "var(--text-1)",
-              }}
-            >
-              all
-            </button>
+            />
             {formats.map((f) => (
-              <button
+              <FilterBtn
                 key={f}
-                className="btn btn-sm"
+                label={f.toUpperCase()}
+                active={formatFilter === f}
                 onClick={() => setFormatFilter(f)}
-                style={{
-                  borderColor: formatFilter === f ? "var(--accent)" : undefined,
-                  color: formatFilter === f ? "var(--accent)" : "var(--text-1)",
-                }}
-              >
-                {f}
-              </button>
+              />
             ))}
           </div>
         </div>
 
         {selected.size > 0 && (
           <div
-            className="card row f-center"
-            style={{ padding: "10px 16px", gap: 12 }}
+            className="card row f-center fade-in"
+            style={{
+              padding: "10px 16px",
+              gap: 12,
+              borderLeft: "2px solid var(--accent)",
+            }}
           >
-            <span className="t-13">{selected.size} selected</span>
+            <span className="t-13">
+              <span className="t-mono" style={{ color: "var(--accent)" }}>
+                {selected.size}
+              </span>{" "}
+              selected
+            </span>
             <div style={{ flex: 1 }}></div>
             <button
               className="btn btn-sm"
               disabled={!baseConfig}
-              onClick={() => setConfirmReindex(selectedDocs)}
+              onClick={() => askReindex(selectedDocs)}
             >
               <Icon name="play" size={11} /> Re-index
             </button>
             <button
               className="btn btn-sm"
-              onClick={() => setConfirmDelete(selectedDocs)}
+              onClick={() => askDelete(selectedDocs)}
               style={{ color: "var(--error)", borderColor: "var(--error)" }}
             >
               <Icon name="trash" size={11} /> Delete
+            </button>
+            <button className="btn btn-sm" onClick={() => setSelected(new Set())}>
+              Clear
             </button>
           </div>
         )}
@@ -319,6 +456,7 @@ export function Library(): JSX.Element {
               checked={allSelected}
               onChange={toggleAll}
               aria-label="select all"
+              style={{ accentColor: "var(--accent)" }}
             />
             <span className="t-label" style={{ flex: 1 }}>
               Filename
@@ -329,17 +467,22 @@ export function Library(): JSX.Element {
             <span className="t-label" style={{ width: 100, textAlign: "right" }}>
               Size
             </span>
-            <span className="t-label" style={{ width: 110 }}>
+            <span className="t-label" style={{ width: 80, textAlign: "right" }}>
+              Chunks
+            </span>
+            <span className="t-label" style={{ width: 130 }}>
               Status
             </span>
             <span style={{ width: 80 }}></span>
           </div>
           {filtered.length === 0 ? (
-            <div className="row f-center" style={{ padding: 32 }}>
-              <span className="t-meta t-13">
-                {documents.length === 0 ? "No documents yet — drop files above." : "No matches."}
-              </span>
-            </div>
+            <EmptyState
+              hasDocs={documents.length > 0}
+              onClear={() => {
+                setQuery("");
+                setFormatFilter(null);
+              }}
+            />
           ) : (
             filtered.map((d) => (
               <div
@@ -357,6 +500,7 @@ export function Library(): JSX.Element {
                   checked={selected.has(d.id)}
                   onChange={() => toggle(d.id)}
                   aria-label={`select ${d.filename}`}
+                  style={{ accentColor: "var(--accent)" }}
                 />
                 <span className="t-13" style={{ flex: 1, color: "var(--text-0)" }}>
                   {d.filename}
@@ -370,17 +514,44 @@ export function Library(): JSX.Element {
                 >
                   {formatBytes(d.size_bytes)}
                 </span>
-                <span style={{ width: 110 }}>
+                <span
+                  className="t-mono t-13"
+                  style={{
+                    width: 80,
+                    textAlign: "right",
+                    color: (d.chunk_count ?? 0) > 0 ? "var(--text-1)" : "var(--text-2)",
+                  }}
+                >
+                  {(d.chunk_count ?? 0) > 0 ? d.chunk_count!.toLocaleString() : "—"}
+                </span>
+                <span style={{ width: 130 }}>
                   <StatusChip status={d.indexing_status} />
                 </span>
                 <div className="row gap-4" style={{ width: 80, justifyContent: "flex-end" }}>
                   <button
-                    aria-label={`rename ${d.filename}`}
+                    aria-label={`re-index ${d.filename}`}
+                    title="Re-index"
+                    onClick={() => askReindex([d])}
+                    disabled={!baseConfig}
                     className="btn-ghost"
+                    style={{
+                      border: 0,
+                      background: "transparent",
+                      cursor: baseConfig ? "pointer" : "not-allowed",
+                      padding: 4,
+                      opacity: baseConfig ? 1 : 0.4,
+                    }}
+                  >
+                    <Icon name="play" size={11} color="var(--text-2)" />
+                  </button>
+                  <button
+                    aria-label={`rename ${d.filename}`}
+                    title="Rename"
                     onClick={() => {
                       setRenameTarget(d);
                       setRenameDraft(d.filename);
                     }}
+                    className="btn-ghost"
                     style={{
                       border: 0,
                       background: "transparent",
@@ -388,12 +559,13 @@ export function Library(): JSX.Element {
                       padding: 4,
                     }}
                   >
-                    <Icon name="settings" size={12} color="var(--text-2)" />
+                    <Icon name="settings" size={11} color="var(--text-2)" />
                   </button>
                   <button
                     aria-label={`delete ${d.filename}`}
+                    title="Delete"
+                    onClick={() => askDelete([d])}
                     className="btn-ghost"
-                    onClick={() => setConfirmDelete([d])}
                     style={{
                       border: 0,
                       background: "transparent",
@@ -401,7 +573,7 @@ export function Library(): JSX.Element {
                       padding: 4,
                     }}
                   >
-                    <Icon name="trash" size={12} color="var(--text-2)" />
+                    <Icon name="trash" size={11} color="var(--text-2)" />
                   </button>
                 </div>
               </div>
@@ -415,6 +587,15 @@ export function Library(): JSX.Element {
           title="Rename document"
           onClose={() => {
             if (!busy) setRenameTarget(null);
+          }}
+          onConfirm={() => {
+            if (
+              !busy &&
+              renameDraft.trim().length > 0 &&
+              renameDraft !== renameTarget.filename
+            ) {
+              void submitRename();
+            }
           }}
           footer={
             <>
@@ -447,98 +628,131 @@ export function Library(): JSX.Element {
             autoFocus
             value={renameDraft}
             onChange={(e) => setRenameDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submitRename();
-            }}
           />
-        </Modal>
-      )}
-
-      {confirmDelete && (
-        <Modal
-          title={`Delete ${confirmDelete.length === 1 ? "document" : `${confirmDelete.length} documents`}`}
-          onClose={() => {
-            if (!busy) setConfirmDelete(null);
-          }}
-          footer={
-            <>
-              <button
-                className="btn"
-                onClick={() => setConfirmDelete(null)}
-                disabled={busy}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn"
-                onClick={submitDelete}
-                disabled={busy}
-                style={{ borderColor: "var(--error)", color: "var(--error)" }}
-              >
-                Delete
-              </button>
-            </>
-          }
-        >
-          <p className="t-14">
-            {confirmDelete.length === 1 && confirmDelete[0]
-              ? `Delete ${confirmDelete[0].filename}? This removes the file and any chunks.`
-              : `Delete ${confirmDelete.length} documents? This removes the files and their chunks.`}
-          </p>
-        </Modal>
-      )}
-
-      {confirmReindex && (
-        <Modal
-          title="Re-index"
-          onClose={() => {
-            if (!busy) setConfirmReindex(null);
-          }}
-          footer={
-            <>
-              <button
-                className="btn"
-                onClick={() => setConfirmReindex(null)}
-                disabled={busy}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={submitReindex}
-                disabled={busy || !baseConfig}
-              >
-                {busy ? "Starting…" : "Re-index"}
-              </button>
-            </>
-          }
-        >
-          <p className="t-14">
-            Re-index {confirmReindex.length}{" "}
-            {confirmReindex.length === 1 ? "document" : "documents"} with the current
-            workspace config? Existing chunks for these documents will be replaced.
-          </p>
         </Modal>
       )}
     </section>
   );
 }
 
+function StatStrip({
+  stats,
+}: {
+  stats: { documents: number; indexed: number; inProgress: number; queued: number; totalChunks: number };
+}): JSX.Element {
+  return (
+    <div
+      className="card"
+      style={{
+        padding: "14px 20px",
+        display: "grid",
+        gridTemplateColumns: "repeat(5, 1fr)",
+      }}
+    >
+      <Stat label="Documents" value={stats.documents} accent />
+      <Stat label="Indexed" value={stats.indexed} />
+      <Stat label="In progress" value={stats.inProgress} />
+      <Stat label="Queued" value={stats.queued} />
+      <Stat label="Total chunks" value={stats.totalChunks.toLocaleString()} mono />
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  accent,
+  mono,
+}: {
+  label: string;
+  value: number | string;
+  accent?: boolean;
+  mono?: boolean;
+}): JSX.Element {
+  return (
+    <div className="col gap-4">
+      <span className="t-label" style={{ fontSize: 9 }}>
+        {label}
+      </span>
+      <span
+        className={mono ? "t-mono" : ""}
+        style={{
+          fontSize: 22,
+          fontWeight: 300,
+          letterSpacing: "0.01em",
+          color: accent ? "var(--accent)" : "var(--text-0)",
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function FilterBtn({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}): JSX.Element {
+  return (
+    <button
+      className="btn btn-sm"
+      onClick={onClick}
+      style={{
+        marginRight: -1,
+        borderColor: active ? "var(--accent)" : undefined,
+        color: active ? "var(--accent)" : "var(--text-1)",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function EmptyState({
+  hasDocs,
+  onClear,
+}: {
+  hasDocs: boolean;
+  onClear: () => void;
+}): JSX.Element {
+  return (
+    <div className="row f-center" style={{ padding: "60px 20px", justifyContent: "center" }}>
+      <div className="col gap-12 f-center">
+        <span className="t-13 t-meta">
+          {hasDocs ? "No documents match your filter." : "No documents yet — drop files above."}
+        </span>
+        {hasDocs && (
+          <button className="btn btn-sm" onClick={onClear}>
+            Clear filter
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function StatusChip({ status }: { status: string }): JSX.Element {
-  const isIndexed = status === "indexed";
+  const palette: Record<string, { fg: string; dot: string }> = {
+    indexed: { fg: "var(--success)", dot: "var(--success)" },
+    embedding: { fg: "var(--accent)", dot: "var(--accent)" },
+    chunking: { fg: "var(--text-1)", dot: "var(--text-1)" },
+    queued: { fg: "var(--text-2)", dot: "var(--text-2)" },
+    not_indexed: { fg: "var(--text-2)", dot: "var(--text-2)" },
+    failed: { fg: "var(--error)", dot: "var(--error)" },
+  };
+  const p = palette[status] ?? palette["not_indexed"]!;
   return (
     <span
       className="chip"
-      style={{
-        color: isIndexed ? "var(--success)" : "var(--text-2)",
-        borderColor: isIndexed ? "var(--success)" : "var(--border)",
-      }}
+      style={{ color: p.fg, borderColor: p.fg === "var(--text-2)" ? "var(--border)" : p.fg }}
     >
-      <span
-        className="dot"
-        style={{ background: isIndexed ? "var(--success)" : "var(--text-2)" }}
-      ></span>
-      {status}
+      <span className="dot" style={{ background: p.dot }}></span>
+      {status === "not_indexed" ? "queued" : status}
     </span>
   );
 }
@@ -596,6 +810,70 @@ function DropZone({
       </div>
     </label>
   );
+}
+
+function buildPreview(
+  docs: DocumentItem[],
+  fmt: ExportFormat,
+  inc: Record<string, boolean>,
+  workspaceId: string,
+): string {
+  const sample = docs.slice(0, 6);
+  if (fmt === "csv") {
+    const cols = ["id", "filename", "format"];
+    if (inc.meta !== false) cols.push("size_bytes");
+    if (inc.status) cols.push("status", "chunks");
+    if (inc.checksums) cols.push("content_hash");
+    const header = cols.join(",");
+    const rows = sample.map((d) => {
+      const r: Array<string | number> = [d.id, JSON.stringify(d.filename), d.format];
+      if (inc.meta !== false) r.push(d.size_bytes);
+      if (inc.status) r.push(d.indexing_status, d.chunk_count ?? 0);
+      if (inc.checksums) r.push(d.content_hash);
+      return r.join(",");
+    });
+    if (docs.length > sample.length) rows.push(`# … ${docs.length - sample.length} more rows`);
+    return [header, ...rows].join("\n");
+  }
+  if (fmt === "json") {
+    return JSON.stringify(
+      {
+        workspace: workspaceId,
+        exported_at: new Date().toISOString(),
+        documents: sample.map((d) => ({
+          id: d.id,
+          filename: d.filename,
+          format: d.format,
+          ...(inc.meta !== false ? { size_bytes: d.size_bytes } : {}),
+          ...(inc.status
+            ? { status: d.indexing_status, chunks: d.chunk_count ?? 0 }
+            : {}),
+          ...(inc.checksums ? { content_hash: d.content_hash } : {}),
+        })),
+      },
+      null,
+      2,
+    );
+  }
+  // yaml
+  const lines = [
+    `# OpenRAG-Lab document list`,
+    `workspace: ${workspaceId}`,
+    `total: ${docs.length}`,
+    `documents:`,
+  ];
+  for (const d of sample) {
+    lines.push(`  - id: ${d.id}`);
+    lines.push(`    filename: "${d.filename}"`);
+    lines.push(`    format: ${d.format}`);
+    if (inc.meta !== false) lines.push(`    size_bytes: ${d.size_bytes}`);
+    if (inc.status) {
+      lines.push(`    status: ${d.indexing_status}`);
+      lines.push(`    chunks: ${d.chunk_count ?? 0}`);
+    }
+    if (inc.checksums) lines.push(`    content_hash: "${d.content_hash}"`);
+  }
+  return lines.join("\n");
 }
 
 function formatBytes(n: number): string {
