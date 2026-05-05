@@ -373,7 +373,11 @@ export const api = {
   addGoldenPairs: (
     workspaceId: string,
     setId: string,
-    pairs: Array<{ question: string; expected_answer?: string | null }>,
+    pairs: Array<{
+      question: string;
+      expected_answer?: string | null;
+      expected_chunk_ids?: string[];
+    }>,
   ): Promise<{ added: number; ids: string[] }> =>
     request(`/workspaces/${workspaceId}/golden-sets/${setId}/pairs`, {
       method: "POST",
@@ -384,7 +388,11 @@ export const api = {
     workspaceId: string,
     setId: string,
     pairId: string,
-    body: { question?: string; expected_answer?: string | null },
+    body: {
+      question?: string;
+      expected_answer?: string | null;
+      expected_chunk_ids?: string[];
+    },
   ): Promise<{ id: string; question: string; expected_answer: string | null }> =>
     request(
       `/workspaces/${workspaceId}/golden-sets/${setId}/pairs/${pairId}`,

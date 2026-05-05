@@ -1,12 +1,20 @@
 /**
  * Golden Sets — manage evaluation pairs.
  *
- * Backed by /golden-sets and /pairs endpoints. CSV export is just an
- * anchor pointing at the export URL; the browser handles the download.
+ * Backed by /golden-sets and /pairs endpoints. CSV export hands off to
+ * the browser via a download anchor pointing at the backend export URL.
+ *
+ * Add / edit pairs goes through the shared GoldenPairModal (which also
+ * captures expected_chunk_ids); CSV import goes through the shared
+ * UploadModal so it matches the document upload UX.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { GoldenPairModal } from "../components/modals/GoldenPairModal";
+import { UploadModal } from "../components/modals/UploadModal";
+import { confirmModal, useModal } from "../components/providers/ModalProvider";
+import { useToast } from "../components/providers/ToastProvider";
 import { useWorkspaceStore } from "../stores/workspace";
 import { Icon, Modal, PageHeader } from "../components/ui";
 
@@ -25,22 +33,15 @@ interface PairItem {
 
 export function GoldenSets(): JSX.Element {
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const modal = useModal();
+  const toast = useToast();
   const [sets, setSets] = useState<SetItem[]>([]);
   const [activeSetId, setActiveSetId] = useState<string | null>(null);
   const [pairs, setPairs] = useState<PairItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createDraft, setCreateDraft] = useState("");
-  const [editing, setEditing] = useState<PairItem | null>(null);
-  const [editQ, setEditQ] = useState("");
-  const [editA, setEditA] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState<PairItem | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
-  const [addQ, setAddQ] = useState("");
-  const [addA, setAddA] = useState("");
   const [busy, setBusy] = useState(false);
-  const importInputRef = useRef<HTMLInputElement>(null);
-  const [importToast, setImportToast] = useState<string | null>(null);
 
   const refreshSets = async (): Promise<void> => {
     if (!workspaceId) return;
@@ -79,6 +80,7 @@ export function GoldenSets(): JSX.Element {
       setCreateDraft("");
       await refreshSets();
       setActiveSetId(created.id);
+      toast.push({ eyebrow: "Created", message: `${createDraft} ready.` });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -86,75 +88,112 @@ export function GoldenSets(): JSX.Element {
     }
   };
 
-  const submitEdit = async (): Promise<void> => {
-    if (!workspaceId || !activeSetId || !editing) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.updateGoldenPair(workspaceId, activeSetId, editing.id, {
-        question: editQ,
-        expected_answer: editA || null,
-      });
-      setEditing(null);
-      await refreshPairs();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+  const openAdd = (): void => {
+    if (!activeSetId) return;
+    modal.open({
+      title: "Add golden pair",
+      eyebrow: "Golden set",
+      width: 520,
+      render: ({ close }) => (
+        <GoldenPairModal
+          onSave={async (v) => {
+            if (!workspaceId) return;
+            await api.addGoldenPairs(workspaceId, activeSetId, [
+              {
+                question: v.question,
+                expected_answer: v.expected_answer || null,
+                expected_chunk_ids: v.expected_chunk_ids,
+              },
+            ]);
+            await refreshPairs();
+            await refreshSets();
+            toast.push({
+              eyebrow: "Added",
+              message: "New pair saved to golden set.",
+            });
+          }}
+          close={close}
+        />
+      ),
+    });
   };
 
-  const submitDelete = async (): Promise<void> => {
-    if (!workspaceId || !activeSetId || !confirmDelete) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.deleteGoldenPair(workspaceId, activeSetId, confirmDelete.id);
-      setConfirmDelete(null);
-      await refreshPairs();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+  const openEdit = (p: PairItem): void => {
+    if (!activeSetId) return;
+    modal.open({
+      title: "Edit golden pair",
+      eyebrow: "Golden set",
+      width: 520,
+      render: ({ close }) => (
+        <GoldenPairModal
+          initial={{
+            question: p.question,
+            expected_answer: p.expected_answer ?? "",
+            expected_chunk_ids: p.expected_chunk_ids,
+          }}
+          onSave={async (v) => {
+            if (!workspaceId) return;
+            await api.updateGoldenPair(workspaceId, activeSetId, p.id, {
+              question: v.question,
+              expected_answer: v.expected_answer || null,
+              expected_chunk_ids: v.expected_chunk_ids,
+            });
+            await refreshPairs();
+            toast.push({ eyebrow: "Saved", message: "Pair updated." });
+          }}
+          close={close}
+        />
+      ),
+    });
   };
 
-  const handleImport = async (file: File): Promise<void> => {
-    if (!workspaceId || !activeSetId) return;
-    setBusy(true);
-    setError(null);
-    setImportToast(null);
-    try {
-      const r = await api.importGoldenPairs(workspaceId, activeSetId, file);
-      setImportToast(`+${r.added} pairs imported${r.skipped ? `, ${r.skipped} skipped` : ""}`);
-      await refreshPairs();
-      await refreshSets();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-      if (importInputRef.current) importInputRef.current.value = "";
-    }
+  const askDelete = (p: PairItem): void => {
+    if (!activeSetId) return;
+    confirmModal(modal, {
+      title: "Delete this pair?",
+      message: p.question,
+      confirmLabel: "Delete",
+      danger: true,
+      onConfirm: async () => {
+        if (!workspaceId) return;
+        await api.deleteGoldenPair(workspaceId, activeSetId, p.id);
+        await refreshPairs();
+        toast.push({
+          eyebrow: "Deleted",
+          message: "Pair removed.",
+          kind: "error",
+        });
+      },
+    });
   };
 
-  const submitAdd = async (): Promise<void> => {
-    if (!workspaceId || !activeSetId) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.addGoldenPairs(workspaceId, activeSetId, [
-        { question: addQ, expected_answer: addA || null },
-      ]);
-      setAddOpen(false);
-      setAddQ("");
-      setAddA("");
-      await refreshPairs();
-      await refreshSets();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+  const openImport = (): void => {
+    if (!activeSetId) return;
+    modal.open({
+      title: "Import golden set",
+      eyebrow: "CSV upload",
+      width: 480,
+      render: ({ close }) => (
+        <UploadModal
+          accept=".csv"
+          hint="CSV with columns: question, expected_answer, source"
+          confirmLabel="Import"
+          autoIndexToggle={false}
+          onUpload={async (files) => {
+            if (!workspaceId || files.length === 0) return;
+            const f = files[0]!;
+            const r = await api.importGoldenPairs(workspaceId, activeSetId, f);
+            toast.push({
+              eyebrow: "Imported",
+              message: `+${r.added} pairs${r.skipped ? `, ${r.skipped} skipped` : ""}.`,
+            });
+            await refreshPairs();
+            await refreshSets();
+          }}
+          close={close}
+        />
+      ),
+    });
   };
 
   if (!workspaceId)
@@ -248,45 +287,29 @@ export function GoldenSets(): JSX.Element {
             <button
               className="btn btn-sm"
               disabled={!activeSetId}
-              onClick={() => setAddOpen(true)}
+              onClick={openAdd}
             >
               + Add pair
             </button>
             {workspaceId && activeSetId && (
               <>
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  accept=".csv,text/csv"
-                  style={{ display: "none" }}
-                  aria-label="import csv file"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) handleImport(f);
-                  }}
-                />
                 <button
                   className="btn btn-sm"
+                  onClick={openImport}
                   disabled={busy}
-                  onClick={() => importInputRef.current?.click()}
                 >
-                  <Icon name="ext" size={11} /> Import CSV
+                  <Icon name="upload" size={11} /> Import CSV
                 </button>
                 <a
                   className="btn btn-sm"
                   href={api.exportGoldenSetUrl(workspaceId, activeSetId)}
                   download
                 >
-                  <Icon name="ext" size={11} /> Export CSV
+                  <Icon name="yaml" size={11} /> Export CSV
                 </a>
               </>
             )}
           </div>
-          {importToast && (
-            <span className="t-12 t-meta" role="status">
-              {importToast}
-            </span>
-          )}
           <div className="card">
             {pairs.length === 0 ? (
               <p
@@ -303,7 +326,7 @@ export function GoldenSets(): JSX.Element {
                     padding: "12px 16px",
                     borderBottom: "1px solid var(--border)",
                     display: "grid",
-                    gridTemplateColumns: "1fr auto",
+                    gridTemplateColumns: "1fr auto auto",
                     gap: 12,
                     alignItems: "start",
                   }}
@@ -313,15 +336,23 @@ export function GoldenSets(): JSX.Element {
                     <span className="t-12 t-meta">
                       {p.expected_answer ?? "—"}
                     </span>
+                    {p.expected_chunk_ids.length > 0 && (
+                      <span className="t-12 t-mono t-meta">
+                        chunks: {p.expected_chunk_ids.slice(0, 3).join(", ")}
+                        {p.expected_chunk_ids.length > 3 && ` … +${p.expected_chunk_ids.length - 3}`}
+                      </span>
+                    )}
                   </div>
+                  <span
+                    className="t-12 t-mono t-meta"
+                    style={{ textAlign: "right", whiteSpace: "nowrap" }}
+                  >
+                    {p.expected_chunk_ids.length} chunks
+                  </span>
                   <div className="row gap-4">
                     <button
                       className="btn-ghost"
-                      onClick={() => {
-                        setEditing(p);
-                        setEditQ(p.question);
-                        setEditA(p.expected_answer ?? "");
-                      }}
+                      onClick={() => openEdit(p)}
                       style={{
                         border: 0,
                         background: "transparent",
@@ -334,7 +365,7 @@ export function GoldenSets(): JSX.Element {
                     </button>
                     <button
                       className="btn-ghost"
-                      onClick={() => setConfirmDelete(p)}
+                      onClick={() => askDelete(p)}
                       style={{
                         border: 0,
                         background: "transparent",
@@ -358,6 +389,9 @@ export function GoldenSets(): JSX.Element {
           title="New golden set"
           onClose={() => {
             if (!busy) setCreateOpen(false);
+          }}
+          onConfirm={() => {
+            if (!busy && createDraft.trim().length > 0) void submitCreate();
           }}
           footer={
             <>
@@ -386,141 +420,7 @@ export function GoldenSets(): JSX.Element {
             autoFocus
             value={createDraft}
             onChange={(e) => setCreateDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submitCreate();
-            }}
           />
-        </Modal>
-      )}
-
-      {editing && (
-        <Modal
-          title="Edit pair"
-          onClose={() => {
-            if (!busy) setEditing(null);
-          }}
-          footer={
-            <>
-              <button
-                className="btn"
-                onClick={() => setEditing(null)}
-                disabled={busy}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={submitEdit}
-                disabled={busy || editQ.trim().length === 0}
-              >
-                Save
-              </button>
-            </>
-          }
-        >
-          <label className="t-label" style={{ display: "block", marginBottom: 8 }}>
-            Question
-          </label>
-          <textarea
-            className="input"
-            rows={3}
-            value={editQ}
-            onChange={(e) => setEditQ(e.target.value)}
-          />
-          <label
-            className="t-label"
-            style={{ display: "block", margin: "12px 0 8px" }}
-          >
-            Expected answer (optional)
-          </label>
-          <textarea
-            className="input"
-            rows={3}
-            value={editA}
-            onChange={(e) => setEditA(e.target.value)}
-          />
-        </Modal>
-      )}
-
-      {addOpen && (
-        <Modal
-          title="Add pair"
-          onClose={() => {
-            if (!busy) setAddOpen(false);
-          }}
-          footer={
-            <>
-              <button
-                className="btn"
-                onClick={() => setAddOpen(false)}
-                disabled={busy}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={submitAdd}
-                disabled={busy || addQ.trim().length === 0}
-              >
-                Add
-              </button>
-            </>
-          }
-        >
-          <label className="t-label" style={{ display: "block", marginBottom: 8 }}>
-            Question
-          </label>
-          <textarea
-            className="input"
-            autoFocus
-            rows={3}
-            value={addQ}
-            onChange={(e) => setAddQ(e.target.value)}
-          />
-          <label
-            className="t-label"
-            style={{ display: "block", margin: "12px 0 8px" }}
-          >
-            Expected answer (optional)
-          </label>
-          <textarea
-            className="input"
-            rows={3}
-            value={addA}
-            onChange={(e) => setAddA(e.target.value)}
-          />
-        </Modal>
-      )}
-
-      {confirmDelete && (
-        <Modal
-          title="Delete pair"
-          onClose={() => {
-            if (!busy) setConfirmDelete(null);
-          }}
-          footer={
-            <>
-              <button
-                className="btn"
-                onClick={() => setConfirmDelete(null)}
-                disabled={busy}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn"
-                onClick={submitDelete}
-                disabled={busy}
-                style={{ borderColor: "var(--error)", color: "var(--error)" }}
-              >
-                Delete
-              </button>
-            </>
-          }
-        >
-          <p className="t-14">
-            Delete this pair? <em>{confirmDelete.question}</em>
-          </p>
         </Modal>
       )}
     </section>
