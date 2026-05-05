@@ -77,7 +77,7 @@ def _serialize_preset(preset: Preset, profile: SystemProfile) -> dict[str, Any]:
     recommended = recommend(profile)
     return {
         "id": preset.name,
-        "name": preset.name,
+        "name": preset.display_name,
         "available": True,
         "recommended": preset.name == recommended.name,
         "config": {

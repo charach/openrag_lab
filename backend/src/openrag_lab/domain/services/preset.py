@@ -25,6 +25,10 @@ class Preset:
     """A named bundle the wizard offers."""
 
     name: str
+    """Stable internal identifier (e.g. ``lite``). Persisted in
+    workspace configs; do not rename without a migration."""
+    display_name: str
+    """Human-facing label rendered in the wizard (e.g. ``Speed``)."""
     embedder_id: str
     embedder_dim: int
     chunking: ChunkingConfig
@@ -37,6 +41,7 @@ class Preset:
 _TIER_PRESETS: dict[str, Preset] = {
     "lite": Preset(
         name="lite",
+        display_name="Speed",
         embedder_id="all-MiniLM-L6-v2",
         embedder_dim=384,
         chunking=ChunkingConfig(
@@ -45,10 +50,11 @@ _TIER_PRESETS: dict[str, Preset] = {
         retrieval_strategy=RetrievalStrategy.DENSE,
         top_k=4,
         metric=DistanceMetric.COSINE,
-        rationale="Low-RAM friendly: small 384-dim model, modest chunk size.",
+        rationale="8GB 미만 GPU 또는 CPU 환경에서 빠른 응답.",
     ),
     "balanced": Preset(
         name="balanced",
+        display_name="Balanced",
         embedder_id="BAAI/bge-base-en-v1.5",
         embedder_dim=768,
         chunking=ChunkingConfig(
@@ -57,10 +63,11 @@ _TIER_PRESETS: dict[str, Preset] = {
         retrieval_strategy=RetrievalStrategy.DENSE,
         top_k=5,
         metric=DistanceMetric.COSINE,
-        rationale="Default for typical laptops: 768-dim model, ~4 GB RAM.",
+        rationale="일반적인 PC 환경에서 정확도와 속도의 균형.",
     ),
     "quality": Preset(
         name="quality",
+        display_name="Accuracy",
         embedder_id="BAAI/bge-m3",
         embedder_dim=1024,
         chunking=ChunkingConfig(
@@ -69,7 +76,7 @@ _TIER_PRESETS: dict[str, Preset] = {
         retrieval_strategy=RetrievalStrategy.DENSE,
         top_k=8,
         metric=DistanceMetric.COSINE,
-        rationale="Quality first: 1024-dim multilingual model, larger top_k.",
+        rationale="대형 모델·높은 top_k. 24 GB+ RAM 권장.",
     ),
 }
 
