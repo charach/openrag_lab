@@ -82,6 +82,7 @@ def _serialize_preset(preset: Preset, profile: SystemProfile) -> dict[str, Any]:
         "recommended": preset.name == recommended.name,
         "config": {
             "embedder_id": preset.embedder_id,
+            "embedder_dim": preset.embedder_dim,
             "chunking": {
                 "strategy": preset.chunking.strategy.value,
                 "chunk_size": preset.chunking.chunk_size,

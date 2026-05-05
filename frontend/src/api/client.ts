@@ -84,6 +84,12 @@ export interface PresetResponse {
     recommended?: boolean;
     config: {
       embedder_id: string;
+      /**
+       * Output dimension of the preset's embedder. Used by Auto-Pilot
+       * to detect dim-mismatch (mid-flow preset switches that would
+       * orphan existing experiments).
+       */
+      embedder_dim?: number;
       chunking: { strategy: string; chunk_size: number; chunk_overlap: number };
       retrieval_strategy: string;
       top_k: number;

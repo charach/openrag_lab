@@ -3,20 +3,37 @@
  *
  * The flow stays linear: a non-expert picks one of the recommended presets,
  * names a workspace, drops files, then watches indexing progress over WS.
+ *
+ * Three notable design behaviours:
+ *
+ *   1. Switching a preset whose embedder has a different output dim
+ *      surfaces a DimMismatchModal — a future re-index would have to
+ *      archive existing experiments.
+ *   2. Indexing renders a three-stage breakdown (parsed / chunked /
+ *      embedded) derived from the most recent WS stage value, so the
+ *      user can see where the job is in the pipeline.
+ *   3. Pause is currently a stub (toast) since the backend exposes
+ *      Cancel only — checkpoints already let a job resume by re-running
+ *      indexing without ``force_reindex``, so the missing pause is a
+ *      surface concern, not a data one.
  */
 
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   api,
+  type DocumentItem,
   type PresetResponse,
   type SystemProfileResponse,
   type WorkspaceSummary,
 } from "../api/client";
+import { DimMismatchModal } from "../components/modals/DimMismatchModal";
+import { confirmModal, useModal } from "../components/providers/ModalProvider";
+import { useToast } from "../components/providers/ToastProvider";
 import { useWebSocket } from "../hooks/useWebSocket";
-import { useWorkspaceStore } from "../stores/workspace";
 import { useIndexingStore } from "../stores/indexing";
-import { Icon, Modal, PageHeader, Step } from "../components/ui";
+import { useWorkspaceStore } from "../stores/workspace";
+import { FormatTag, Icon, PageHeader, Step } from "../components/ui";
 
 const ACCEPTED_EXTENSIONS = [".pdf", ".txt", ".md", ".markdown"];
 
@@ -28,7 +45,23 @@ function isAcceptedExtension(filename: string): boolean {
 type PresetEntry = PresetResponse["presets"][number];
 type WorkspaceMode = "existing" | "new";
 
+/** Map an arbitrary stage label to one of three known buckets. */
+type StageKey = "parse" | "chunk" | "embed";
+
+function bucketStage(stage: string | null): StageKey | null {
+  if (!stage) return null;
+  const lower = stage.toLowerCase();
+  if (lower.startsWith("parse") || lower.startsWith("parsed")) return "parse";
+  if (lower.startsWith("chunk")) return "chunk";
+  if (lower.startsWith("embed")) return "embed";
+  return null;
+}
+
+const STAGE_ORDER: StageKey[] = ["parse", "chunk", "embed"];
+
 export function AutoPilotWizard(): JSX.Element {
+  const modal = useModal();
+  const toast = useToast();
   const [profile, setProfile] = useState<SystemProfileResponse | null>(null);
   const [presets, setPresets] = useState<PresetEntry[]>([]);
   const [chosen, setChosen] = useState<string | null>(null);
@@ -38,8 +71,8 @@ export function AutoPilotWizard(): JSX.Element {
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [confirmCancel, setConfirmCancel] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [failedDocs, setFailedDocs] = useState<DocumentItem[]>([]);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const indexing = useIndexingStore();
@@ -72,11 +105,30 @@ export function AutoPilotWizard(): JSX.Element {
   });
 
   const ratio = typeof indexing.progress?.ratio === "number" ? indexing.progress.ratio : null;
-  const stage = typeof indexing.progress?.type === "string" ? indexing.progress.type : null;
+  const stageRaw = typeof indexing.progress?.stage === "string"
+    ? indexing.progress.stage
+    : typeof indexing.progress?.type === "string"
+      ? indexing.progress.type
+      : null;
+  const stage = bucketStage(stageRaw);
   const isActive =
     indexing.phase === "starting" || indexing.phase === "running" || indexing.phase === "done";
   const isStarting = indexing.phase === "starting";
   const cancelled = indexing.phase === "cancelled";
+  const completed = indexing.phase === "done" || (ratio !== null && ratio >= 0.999);
+
+  // Fetch failed-doc list once indexing completes/cancels so the user
+  // can see exactly which files didn't make it. The WS doesn't emit per-
+  // doc fail events, but the document repo updates on completion.
+  useEffect(() => {
+    if (!indexing.workspaceId) return;
+    if (!completed && !cancelled) return;
+    api
+      .listDocuments(indexing.workspaceId)
+      .then((r) => setFailedDocs(r.items.filter((d) => d.indexing_status === "failed")))
+      .catch(() => undefined);
+  }, [completed, cancelled, indexing.workspaceId]);
+
   const stepStatus = (n: 1 | 2 | 3): "todo" | "active" | "done" => {
     if (n === 1) return chosen ? "done" : "active";
     if (n === 2) return isActive ? "done" : chosen ? "active" : "todo";
@@ -85,22 +137,73 @@ export function AutoPilotWizard(): JSX.Element {
 
   const cancelIndex = async (): Promise<void> => {
     if (!indexing.task) return;
-    setCancelling(true);
     setError(null);
     try {
       await api.cancelTask(indexing.task.task_id);
       indexing.markCancelled();
-      setConfirmCancel(false);
+      toast.push({
+        eyebrow: "Cancelled",
+        message: "Indexing job cancelled. Checkpoints preserved.",
+        kind: "error",
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setCancelling(false);
     }
+  };
+
+  const askCancel = (): void => {
+    confirmModal(modal, {
+      title: "Cancel indexing?",
+      message:
+        "진행 중인 임베딩이 중단됩니다. 체크포인트는 보존되며, 같은 설정으로 다시 시작하면 이어서 진행됩니다.",
+      confirmLabel: "Cancel job",
+      danger: true,
+      onConfirm: cancelIndex,
+    });
+  };
+
+  const trySetChosen = (nextId: string): void => {
+    if (nextId === chosen) return;
+    const cur = presets.find((p) => p.id === chosen);
+    const next = presets.find((p) => p.id === nextId);
+    if (!cur || !next) {
+      setChosen(nextId);
+      return;
+    }
+    const curDim = cur.config.embedder_dim;
+    const nextDim = next.config.embedder_dim;
+    if (curDim && nextDim && curDim !== nextDim && isActive) {
+      modal.open({
+        title: "Embedder change requires reindex",
+        eyebrow: "Dimension mismatch",
+        width: 520,
+        danger: true,
+        render: ({ close }) => (
+          <DimMismatchModal
+            from={{ name: cur.config.embedder_id, dim: curDim }}
+            to={{ name: next.config.embedder_id, dim: nextDim }}
+            archivedCount={1}
+            onConfirm={() => {
+              setChosen(nextId);
+              toast.push({
+                eyebrow: "Reindex pending",
+                message: `Switched to ${next.name}. Existing job will be archived on next start.`,
+              });
+            }}
+            close={close}
+          />
+        ),
+      });
+      return;
+    }
+    setChosen(nextId);
   };
 
   const launch = async (): Promise<void> => {
     setError(null);
     setSubmitting(true);
+    setPaused(false);
+    setFailedDocs([]);
     const preset = presets.find((p) => p.id === chosen);
     if (!preset) {
       setError("preset not chosen");
@@ -186,7 +289,7 @@ export function AutoPilotWizard(): JSX.Element {
                   key={p.id}
                   preset={p}
                   selected={chosen === p.id}
-                  onSelect={() => setChosen(p.id)}
+                  onSelect={() => trySetChosen(p.id)}
                 />
               ))}
             </div>
@@ -277,39 +380,6 @@ export function AutoPilotWizard(): JSX.Element {
           </div>
         </Step>
 
-        {confirmCancel && (
-          <Modal
-            title="Cancel indexing"
-            onClose={() => {
-              if (!cancelling) setConfirmCancel(false);
-            }}
-            footer={
-              <>
-                <button
-                  className="btn"
-                  onClick={() => setConfirmCancel(false)}
-                  disabled={cancelling}
-                >
-                  Keep running
-                </button>
-                <button
-                  className="btn"
-                  onClick={cancelIndex}
-                  disabled={cancelling}
-                  style={{ borderColor: "var(--error)", color: "var(--error)" }}
-                >
-                  {cancelling ? "Cancelling…" : "Cancel indexing"}
-                </button>
-              </>
-            }
-          >
-            <p className="t-14">
-              현재 작업을 중단합니다. 체크포인트가 보존되어 같은 설정으로 다시
-              인덱싱하면 이어서 진행됩니다.
-            </p>
-          </Modal>
-        )}
-
         {isActive && (
           <Step
             number="03"
@@ -319,17 +389,20 @@ export function AutoPilotWizard(): JSX.Element {
               isStarting
                 ? "starting…"
                 : ratio !== null
-                ? `${(ratio * 100).toFixed(1)}% · ${stage ?? "running"}`
-                : "running"
+                  ? `${(ratio * 100).toFixed(1)}% · ${stage ?? stageRaw ?? "running"}`
+                  : "running"
             }
           >
             <div className="col gap-16">
+              {/* Overall progress bar */}
               <div className="col gap-8">
                 <div className="row f-between f-center">
                   <div className="row gap-8 f-center">
-                    <span className="dot dot-gold pulse-gold"></span>
+                    <span
+                      className={"dot" + (completed ? " dot-success" : " dot-gold pulse-gold")}
+                    ></span>
                     <span className="t-13">
-                      {isStarting ? "starting…" : stage ?? "queued"}
+                      {completed ? "completed" : isStarting ? "starting…" : stageRaw ?? "queued"}
                     </span>
                   </div>
                   <span className="t-mono t-12" style={{ color: "var(--accent)" }}>
@@ -349,11 +422,39 @@ export function AutoPilotWizard(): JSX.Element {
                 </div>
               </div>
 
+              {/* Stage breakdown */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                {STAGE_ORDER.map((s) => (
+                  <StageCard
+                    key={s}
+                    label={s === "parse" ? "Parsed" : s === "chunk" ? "Chunked" : "Embedded"}
+                    state={
+                      stage === null
+                        ? "todo"
+                        : STAGE_ORDER.indexOf(s) < STAGE_ORDER.indexOf(stage)
+                          ? "done"
+                          : stage === s
+                            ? "active"
+                            : "todo"
+                    }
+                    ratio={stage === s ? ratio : stage === null ? null : 1}
+                  />
+                ))}
+              </div>
+
+              {/* Failed file panel */}
+              {failedDocs.length > 0 && <FailedFiles items={failedDocs} />}
+
+              {/* Action row */}
               <div className="row gap-12 f-center" style={{ marginTop: 4 }}>
                 {indexing.task && (
                   <>
-                    <span className="t-12 t-meta t-mono">task_id {indexing.task.task_id}</span>
-                    <span className="t-12 t-meta t-mono">exp {indexing.task.experiment_id}</span>
+                    <span className="t-12 t-meta t-mono">
+                      task_id {indexing.task.task_id}
+                    </span>
+                    <span className="t-12 t-meta t-mono">
+                      exp {indexing.task.experiment_id}
+                    </span>
                   </>
                 )}
                 {cancelled && (
@@ -361,18 +462,39 @@ export function AutoPilotWizard(): JSX.Element {
                     cancelled
                   </span>
                 )}
+                {paused && (
+                  <span className="chip" style={{ color: "var(--accent)" }}>
+                    paused
+                  </span>
+                )}
                 <div style={{ flex: 1 }}></div>
                 <button
                   className="btn btn-sm"
-                  onClick={() => setConfirmCancel(true)}
-                  disabled={isStarting || cancelled || (ratio !== null && ratio >= 0.999)}
+                  disabled={isStarting || cancelled || completed}
+                  onClick={() => {
+                    setPaused((p) => !p);
+                    toast.push({
+                      eyebrow: paused ? "Resumed" : "Paused",
+                      message: paused
+                        ? "Indexing continues — checkpoints picked up where they left off."
+                        : "True pause is on the roadmap. Cancel + restart preserves checkpoints today.",
+                    });
+                  }}
+                >
+                  <Icon name={paused ? "play" : "pause"} size={11} />
+                  {paused ? "Resume" : "Pause"}
+                </button>
+                <button
+                  className="btn btn-sm"
+                  onClick={askCancel}
+                  disabled={isStarting || cancelled || completed}
                   style={{ borderColor: "var(--border-strong)", color: "var(--text-1)" }}
                 >
                   <Icon name="x" size={12} /> Cancel
                 </button>
                 <button
                   className="btn btn-primary btn-sm"
-                  disabled={ratio === null || ratio < 0.999}
+                  disabled={!completed}
                   onClick={() => navigate("/chat")}
                 >
                   <Icon name="right" size={12} color="#0A0A0A" /> Go to Chat
@@ -470,6 +592,9 @@ function PresetCard({
       <div style={{ height: 1, background: "var(--border)" }}></div>
       <div className="col gap-4">
         <KV label="embedder" value={preset.config.embedder_id} />
+        {preset.config.embedder_dim && (
+          <KV label="dim" value={String(preset.config.embedder_dim)} />
+        )}
         <KV
           label="chunking"
           value={`${preset.config.chunking.strategy} ${preset.config.chunking.chunk_size}/${preset.config.chunking.chunk_overlap}`}
@@ -510,6 +635,105 @@ function KV({ label, value }: { label: string; value: string }): JSX.Element {
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+function StageCard({
+  label,
+  state,
+  ratio,
+}: {
+  label: string;
+  state: "todo" | "active" | "done";
+  ratio: number | null;
+}): JSX.Element {
+  const isActive = state === "active";
+  const isDone = state === "done";
+  const pct = isDone ? 100 : isActive && ratio !== null ? ratio * 100 : 0;
+  return (
+    <div
+      style={{
+        background: "var(--bg-0)",
+        border: `1px solid ${isActive ? "var(--accent)" : "var(--border)"}`,
+        padding: 14,
+      }}
+    >
+      <div className="row f-between f-center">
+        <span className="t-label">{label}</span>
+        {isActive ? (
+          <span className="dot dot-gold pulse-gold"></span>
+        ) : isDone ? (
+          <Icon name="check" size={11} color="var(--success)" />
+        ) : (
+          <span className="dot"></span>
+        )}
+      </div>
+      <div
+        className="t-20 t-mono"
+        style={{
+          marginTop: 6,
+          color: isActive ? "var(--accent)" : isDone ? "var(--text-0)" : "var(--text-2)",
+        }}
+      >
+        {isDone ? "100" : isActive && ratio !== null ? (ratio * 100).toFixed(0) : "—"}
+        <span className="t-12 t-meta" style={{ marginLeft: 4 }}>
+          {isDone || (isActive && ratio !== null) ? "%" : ""}
+        </span>
+      </div>
+      <div
+        style={{
+          height: 1,
+          background: "var(--bg-3)",
+          marginTop: 10,
+          position: "relative",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: `${pct}%`,
+            background: isActive ? "var(--accent)" : isDone ? "var(--text-1)" : "transparent",
+            transition: "width 220ms linear",
+          }}
+        ></div>
+      </div>
+    </div>
+  );
+}
+
+function FailedFiles({ items }: { items: DocumentItem[] }): JSX.Element {
+  return (
+    <div
+      className="card"
+      style={{
+        background: "var(--bg-0)",
+        padding: 12,
+        borderLeft: "2px solid var(--error)",
+      }}
+    >
+      <div className="row gap-8 f-center" style={{ marginBottom: 8 }}>
+        <Icon name="alert" size={12} color="var(--error)" />
+        <span className="t-12 t-label" style={{ color: "var(--error)" }}>
+          {items.length} file{items.length > 1 ? "s" : ""} failed · 다른 파일은 정상 진행됨
+        </span>
+      </div>
+      {items.map((doc) => (
+        <div
+          key={doc.id}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto",
+            gap: 12,
+            alignItems: "center",
+            padding: "6px 0",
+          }}
+        >
+          <span className="t-13">{doc.filename}</span>
+          <span className="t-mono t-12 t-meta">indexing failed</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -611,7 +835,7 @@ function FileList({
           <Icon name="doc" size={14} color="var(--text-2)" />
           <span className="t-13">{f.name}</span>
           <span className="t-12 t-mono t-meta">{formatBytes(f.size)}</span>
-          <span className="t-12 t-mono t-meta">{f.name.split(".").pop() ?? "?"}</span>
+          <FormatTag format={(f.name.split(".").pop() ?? "?").toLowerCase()} />
           <button
             className="btn-ghost"
             aria-label={`remove ${f.name}`}

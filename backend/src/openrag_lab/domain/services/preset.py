@@ -26,6 +26,7 @@ class Preset:
 
     name: str
     embedder_id: str
+    embedder_dim: int
     chunking: ChunkingConfig
     retrieval_strategy: RetrievalStrategy
     top_k: int
@@ -37,6 +38,7 @@ _TIER_PRESETS: dict[str, Preset] = {
     "lite": Preset(
         name="lite",
         embedder_id="all-MiniLM-L6-v2",
+        embedder_dim=384,
         chunking=ChunkingConfig(
             strategy=ChunkingStrategy.RECURSIVE, chunk_size=256, chunk_overlap=32
         ),
@@ -48,6 +50,7 @@ _TIER_PRESETS: dict[str, Preset] = {
     "balanced": Preset(
         name="balanced",
         embedder_id="BAAI/bge-base-en-v1.5",
+        embedder_dim=768,
         chunking=ChunkingConfig(
             strategy=ChunkingStrategy.RECURSIVE, chunk_size=512, chunk_overlap=64
         ),
@@ -59,6 +62,7 @@ _TIER_PRESETS: dict[str, Preset] = {
     "quality": Preset(
         name="quality",
         embedder_id="BAAI/bge-m3",
+        embedder_dim=1024,
         chunking=ChunkingConfig(
             strategy=ChunkingStrategy.RECURSIVE, chunk_size=512, chunk_overlap=64
         ),
