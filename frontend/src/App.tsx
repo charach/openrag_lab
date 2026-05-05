@@ -5,6 +5,8 @@
 
 import { Route, Routes } from "react-router-dom";
 import { Shell } from "./components/Shell";
+import { ModalProvider } from "./components/providers/ModalProvider";
+import { ToastProvider } from "./components/providers/ToastProvider";
 import { AutoPilotWizard } from "./screens/AutoPilotWizard";
 import { ChatView } from "./screens/ChatView";
 import { ChunkingLab } from "./screens/ChunkingLab";
@@ -15,16 +17,20 @@ import { Library } from "./screens/Library";
 
 export function App(): JSX.Element {
   return (
-    <Shell>
-      <Routes>
-        <Route path="/" element={<AutoPilotWizard />} />
-        <Route path="/library" element={<Library />} />
-        <Route path="/chunking" element={<ChunkingLab />} />
-        <Route path="/chat" element={<ChatView />} />
-        <Route path="/experiments" element={<ExperimentMatrix />} />
-        <Route path="/golden-sets" element={<GoldenSets />} />
-        <Route path="/providers" element={<ExternalProviders />} />
-      </Routes>
-    </Shell>
+    <ModalProvider>
+      <ToastProvider>
+        <Shell>
+          <Routes>
+            <Route path="/" element={<AutoPilotWizard />} />
+            <Route path="/library" element={<Library />} />
+            <Route path="/chunking" element={<ChunkingLab />} />
+            <Route path="/chat" element={<ChatView />} />
+            <Route path="/experiments" element={<ExperimentMatrix />} />
+            <Route path="/golden-sets" element={<GoldenSets />} />
+            <Route path="/providers" element={<ExternalProviders />} />
+          </Routes>
+        </Shell>
+      </ToastProvider>
+    </ModalProvider>
   );
 }

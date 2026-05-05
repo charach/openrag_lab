@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, type SystemProfileResponse, type WorkspaceSummary } from "../api/client";
+import { useExternalCallStore } from "../stores/externalCall";
 import { useThemeStore } from "../stores/theme";
 import { useWorkspaceStore } from "../stores/workspace";
 import { ConfigPortModal } from "./ConfigPortModal";
@@ -27,6 +28,7 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
   const setActive = useWorkspaceStore((s) => s.setActiveWorkspace);
   const theme = useThemeStore((s) => s.theme);
   const toggleTheme = useThemeStore((s) => s.toggle);
+  const externalCall = useExternalCallStore((s) => s.call);
 
   const [profile, setProfile] = useState<SystemProfileResponse | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
@@ -435,6 +437,15 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
             position: "relative",
           }}
         >
+          {profile?.test_mode && (
+            <span
+              className="chip"
+              title="Backend booted with OPENRAG_LAB_TEST_MODE=1 — fake adapters in place of real models."
+              style={{ color: "var(--text-2)", borderColor: "var(--border)" }}
+            >
+              Test mode · fake adapters
+            </span>
+          )}
           {ws && (
             <button
               aria-label="config export/import"
@@ -540,9 +551,25 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
               </div>
             </div>
           )}
-          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-            <span className="dot"></span>
-            <span className="t-12 t-meta">local only</span>
+          <div
+            style={{ display: "flex", alignItems: "center", gap: 7 }}
+            title={
+              externalCall
+                ? `Talking to ${externalCall.provider} — your prompt is leaving local-only mode.`
+                : "All inference is happening on your machine."
+            }
+          >
+            <span className={"dot" + (externalCall ? " dot-gold pulse-gold" : "")}></span>
+            <span
+              className="t-12 t-meta"
+              style={{
+                color: externalCall ? "var(--accent)" : "var(--text-2)",
+              }}
+            >
+              {externalCall
+                ? `${externalCall.provider} · ${externalCall.stage}`
+                : "local only"}
+            </span>
           </div>
         </div>
       </header>

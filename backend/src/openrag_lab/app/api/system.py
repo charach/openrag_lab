@@ -5,6 +5,7 @@ API_SPEC §4. Both endpoints are read-only and never mutate state.
 
 from __future__ import annotations
 
+import os
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
@@ -54,6 +55,7 @@ def _serialize_profile(profile: SystemProfile, layout_root: str) -> dict[str, An
             "openrag_home": layout_root,
         },
         "warnings": list(profile.warnings),
+        "test_mode": os.environ.get("OPENRAG_LAB_TEST_MODE") == "1",
     }
 
 

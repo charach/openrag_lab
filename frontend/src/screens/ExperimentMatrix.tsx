@@ -582,7 +582,9 @@ function NewExperimentPanel({
           setLlmId(cfg.llm_id);
           setStrategy((cfg.chunking.strategy ?? "recursive") as Strategy);
           if (cfg.chunking.chunk_size) setChunkSize(cfg.chunking.chunk_size);
-          if (cfg.chunking.chunk_overlap !== undefined) setChunkOverlap(cfg.chunking.chunk_overlap);
+          if (cfg.chunking.chunk_overlap !== undefined && cfg.chunking.chunk_overlap !== null) {
+            setChunkOverlap(cfg.chunking.chunk_overlap);
+          }
         }
       })
       .catch(() => undefined);

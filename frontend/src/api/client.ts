@@ -67,6 +67,13 @@ export interface SystemProfileResponse {
   os: { platform: string; version: string; arch: string };
   paths: { openrag_home: string };
   warnings: string[];
+  /**
+   * ``true`` when the backend booted with ``OPENRAG_LAB_TEST_MODE=1`` —
+   * fake adapters are wired in place of sentence-transformers / Chroma /
+   * the real LLMs. The header surfaces this so the user can tell at a
+   * glance that they're not hitting production models.
+   */
+  test_mode?: boolean;
 }
 
 export interface PresetResponse {
@@ -128,6 +135,12 @@ export interface ChunkPreviewResponse {
   chunks: ChunkPreviewItem[];
   stats: {
     total_chunks_estimated: number;
+    /**
+     * Whether ``total_chunks_estimated`` is a sample-based extrapolation
+     * (true) or the exact count from a chunker that exhausted the
+     * document inside the preview cap (false).
+     */
+    total_chunks_is_estimate?: boolean;
     avg_token_count: number;
     min_token_count: number;
     max_token_count: number;
