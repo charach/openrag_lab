@@ -459,8 +459,24 @@ async def chunking_preview(
     if previews:
         token_lengths = [len(p.content) for p in previews]
         avg = sum(token_lengths) / len(token_lengths)
+        # The chunker is capped at ``max_chunks`` so ``len(previews)`` is
+        # only the full count when it stops short on its own. Otherwise
+        # extrapolate from how much of the document the sample covered —
+        # the slider UI shows this with a ``≈`` prefix to signal that
+        # it's an estimate, not a measurement.
+        last = previews[-1]
+        consumed_chars = last.char_offset + last.char_length
+        sample_exhausted_doc = len(previews) < body.max_chunks
+        if sample_exhausted_doc or consumed_chars >= document_total_chars:
+            total_chunks_estimated = len(previews)
+        else:
+            total_chunks_estimated = max(
+                len(previews),
+                round(len(previews) * document_total_chars / max(1, consumed_chars)),
+            )
         stats = {
-            "total_chunks_estimated": len(previews),
+            "total_chunks_estimated": total_chunks_estimated,
+            "total_chunks_is_estimate": not sample_exhausted_doc,
             "avg_token_count": round(avg, 1),
             "min_token_count": min(token_lengths),
             "max_token_count": max(token_lengths),
@@ -469,6 +485,7 @@ async def chunking_preview(
     else:
         stats = {
             "total_chunks_estimated": 0,
+            "total_chunks_is_estimate": False,
             "avg_token_count": 0,
             "min_token_count": 0,
             "max_token_count": 0,
