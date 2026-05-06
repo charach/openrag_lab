@@ -44,6 +44,75 @@ describe("indexing store", () => {
     expect(useIndexingStore.getState().phase).toBe("running");
   });
 
+  it("setFileProgress upserts a file row indexed by file_id", () => {
+    const store = useIndexingStore.getState();
+    store.setFileProgress({
+      topic: "indexing.task_1",
+      type: "file_progress",
+      file_id: "doc_a",
+      file_name: "alpha.txt",
+      file_stage: "parsing",
+      ratio: 0,
+    });
+    expect(useIndexingStore.getState().files["doc_a"]).toMatchObject({
+      fileId: "doc_a",
+      fileName: "alpha.txt",
+      stage: "parsing",
+      ratio: 0,
+      chunks: null,
+    });
+    store.setFileProgress({
+      topic: "indexing.task_1",
+      type: "file_progress",
+      file_id: "doc_a",
+      file_name: "alpha.txt",
+      file_stage: "embedded",
+      ratio: 1,
+      chunks: 7,
+    });
+    const row = useIndexingStore.getState().files["doc_a"];
+    expect(row.stage).toBe("embedded");
+    expect(row.chunks).toBe(7);
+    expect(row.ratio).toBe(1);
+  });
+
+  it("setFileProgress ignores malformed messages (missing required fields or bad stage)", () => {
+    const store = useIndexingStore.getState();
+    store.setFileProgress({
+      topic: "indexing.task_1",
+      type: "file_progress",
+      file_name: "x.txt",
+      file_stage: "parsing",
+      ratio: 0,
+    });
+    expect(Object.keys(useIndexingStore.getState().files)).toHaveLength(0);
+
+    store.setFileProgress({
+      topic: "indexing.task_1",
+      type: "file_progress",
+      file_id: "doc_b",
+      file_name: "b.txt",
+      file_stage: "bogus",
+      ratio: 0,
+    });
+    expect(Object.keys(useIndexingStore.getState().files)).toHaveLength(0);
+  });
+
+  it("reset clears the per-file map", () => {
+    const store = useIndexingStore.getState();
+    store.setFileProgress({
+      topic: "indexing.task_1",
+      type: "file_progress",
+      file_id: "doc_c",
+      file_name: "c.txt",
+      file_stage: "embedded",
+      ratio: 1,
+      chunks: 3,
+    });
+    store.reset();
+    expect(useIndexingStore.getState().files).toEqual({});
+  });
+
   it("markCancelled / markError transitions terminal phases", () => {
     useIndexingStore.getState().startStarting("ws_a");
     useIndexingStore.getState().markCancelled();

@@ -455,6 +455,7 @@ export function ChatView(): JSX.Element {
             <textarea
               ref={composerRef}
               className="input"
+              data-testid="chat-composer"
               rows={3}
               placeholder={
                 isRetrievalOnlyExp
@@ -475,6 +476,7 @@ export function ChatView(): JSX.Element {
               </span>
               <button
                 className="btn btn-primary btn-sm"
+                data-testid="chat-ask"
                 onClick={() => ask()}
                 disabled={loading || !selected || !question.trim()}
               >
@@ -522,6 +524,7 @@ function ExperimentRail({
           return (
             <button
               key={e.id}
+              data-testid="chat-experiment-row"
               onClick={() => onSelect(e.id)}
               style={{
                 textAlign: "left",

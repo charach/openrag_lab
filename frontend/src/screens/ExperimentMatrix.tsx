@@ -186,7 +186,9 @@ export function ExperimentMatrix(): JSX.Element {
   if (!workspaceId)
     return (
       <section className="page">
-        <p className="t-meta">워크스페이스를 먼저 선택하세요.</p>
+        <p className="t-meta" data-testid="experiments-empty">
+          워크스페이스를 먼저 선택하세요.
+        </p>
       </section>
     );
 

@@ -18,7 +18,7 @@
  *      surface concern, not a data one.
  */
 
-import { useEffect, useMemo, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   api,
@@ -27,6 +27,7 @@ import {
   type SystemProfileResponse,
   type WorkspaceSummary,
 } from "../api/client";
+import { DropZone } from "../components/DropZone";
 import { DimMismatchModal } from "../components/modals/DimMismatchModal";
 import { confirmModal, useModal } from "../components/providers/ModalProvider";
 import { useToast } from "../components/providers/ToastProvider";
@@ -101,7 +102,10 @@ export function AutoPilotWizard(): JSX.Element {
   useWebSocket({
     topics,
     enabled: indexing.task !== null,
-    onMessage: (msg) => indexing.setProgress(msg),
+    onMessage: (msg) => {
+      if (msg.type === "file_progress") indexing.setFileProgress(msg);
+      else indexing.setProgress(msg);
+    },
   });
 
   const ratio = typeof indexing.progress?.ratio === "number" ? indexing.progress.ratio : null;
@@ -290,6 +294,7 @@ export function AutoPilotWizard(): JSX.Element {
                   preset={p}
                   selected={chosen === p.id}
                   onSelect={() => trySetChosen(p.id)}
+                  testId={`wizard-preset-${p.id}`}
                 />
               ))}
             </div>
@@ -311,6 +316,7 @@ export function AutoPilotWizard(): JSX.Element {
                 <div className="row gap-6">
                   <button
                     type="button"
+                    data-testid="wizard-mode-existing"
                     className={`btn btn-sm${workspaceMode === "existing" ? " btn-primary" : ""}`}
                     onClick={() => setWorkspaceMode("existing")}
                     disabled={workspaces.length === 0}
@@ -322,6 +328,7 @@ export function AutoPilotWizard(): JSX.Element {
                   </button>
                   <button
                     type="button"
+                    data-testid="wizard-mode-new"
                     className={`btn btn-sm${workspaceMode === "new" ? " btn-primary" : ""}`}
                     onClick={() => setWorkspaceMode("new")}
                   >
@@ -337,6 +344,7 @@ export function AutoPilotWizard(): JSX.Element {
                 ) : (
                   <input
                     className="input"
+                    data-testid="wizard-workspace-name"
                     placeholder="새 워크스페이스 이름"
                     value={workspaceName}
                     onChange={(e) => setWorkspaceName(e.target.value)}
@@ -354,7 +362,7 @@ export function AutoPilotWizard(): JSX.Element {
             </div>
 
             <div className="col gap-12">
-              <DropZone files={files} setFiles={setFiles} />
+              <WizardDropZone files={files} setFiles={setFiles} />
               {files.length > 0 && <FileList files={files} setFiles={setFiles} />}
             </div>
           </div>
@@ -366,6 +374,7 @@ export function AutoPilotWizard(): JSX.Element {
             <div style={{ flex: 1 }}></div>
             <button
               className="btn btn-primary"
+              data-testid="wizard-start"
               onClick={launch}
               disabled={
                 submitting ||
@@ -442,6 +451,11 @@ export function AutoPilotWizard(): JSX.Element {
                 ))}
               </div>
 
+              {/* Per-file progress rows */}
+              {Object.keys(indexing.files).length > 0 && (
+                <PerFileList files={indexing.files} />
+              )}
+
               {/* Failed file panel */}
               {failedDocs.length > 0 && <FailedFiles items={failedDocs} />}
 
@@ -494,6 +508,7 @@ export function AutoPilotWizard(): JSX.Element {
                 </button>
                 <button
                   className="btn btn-primary btn-sm"
+                  data-testid="wizard-go-chat"
                   disabled={!completed}
                   onClick={() => navigate("/chat")}
                 >
@@ -551,15 +566,19 @@ function PresetCard({
   preset,
   selected,
   onSelect,
+  testId,
 }: {
   preset: PresetEntry;
   selected: boolean;
   onSelect: () => void;
+  testId?: string;
 }): JSX.Element {
   return (
     <button
       onClick={onSelect}
       disabled={!preset.available}
+      data-testid={testId}
+      aria-pressed={selected}
       style={{
         textAlign: "left",
         padding: 18,
@@ -738,7 +757,7 @@ function FailedFiles({ items }: { items: DocumentItem[] }): JSX.Element {
   );
 }
 
-function DropZone({
+function WizardDropZone({
   files,
   setFiles,
 }: {
@@ -756,40 +775,15 @@ function DropZone({
     if (ok.length > 0) setFiles([...files, ...ok]);
     setRejected(bad);
   };
-  const onDrop = (e: DragEvent<HTMLLabelElement>): void => {
-    e.preventDefault();
-    const dropped = Array.from(e.dataTransfer?.files ?? []);
-    if (dropped.length > 0) accept(dropped);
-  };
   return (
     <div className="col gap-6">
-      <label
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={onDrop}
-        style={{
-          border: "1px dashed var(--border-strong)",
-          padding: "32px 24px",
-          textAlign: "center",
-          background: "var(--bg-0)",
-          cursor: "pointer",
-          display: "block",
-        }}
-      >
-        <Icon name="upload" size={20} color="var(--text-2)" />
-        <div className="t-14" style={{ marginTop: 10 }}>
-          Drop PDF · TXT · Markdown anywhere here
-        </div>
-        <div className="t-12 t-meta" style={{ marginTop: 4 }}>
-          클릭하거나 파일·폴더를 끌어다 놓으세요. 허용 확장자: {ACCEPTED_EXTENSIONS.join(", ")}
-        </div>
-        <input
-          type="file"
-          multiple
-          accept={ACCEPTED_EXTENSIONS.join(",")}
-          onChange={(e) => accept(e.target.files ? Array.from(e.target.files) : [])}
-          style={{ display: "none" }}
-        />
-      </label>
+      <DropZone
+        accept={ACCEPTED_EXTENSIONS.join(",")}
+        caption="Drop PDF · TXT · Markdown anywhere here"
+        hint={`클릭하거나 파일·폴더를 끌어다 놓으세요. 허용 확장자: ${ACCEPTED_EXTENSIONS.join(", ")}`}
+        background="var(--bg-0)"
+        onFiles={accept}
+      />
       {rejected.length > 0 && (
         <span className="t-12" style={{ color: "var(--error)" }}>
           지원하지 않는 확장자가 무시되었습니다: {rejected.join(", ")}
@@ -852,6 +846,61 @@ function FileList({
           </button>
         </div>
       ))}
+    </div>
+  );
+}
+
+function PerFileList({
+  files,
+}: {
+  files: Record<string, import("../stores/indexing").FileProgress>;
+}): JSX.Element {
+  const rows = Object.values(files).sort((a, b) => a.fileName.localeCompare(b.fileName));
+  return (
+    <div className="col" data-testid="per-file-list">
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 110px 80px 60px",
+          padding: "8px 4px",
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <span className="t-label">File</span>
+        <span className="t-label">Stage</span>
+        <span className="t-label">Chunks</span>
+        <span className="t-label" style={{ textAlign: "right" }}>
+          %
+        </span>
+      </div>
+      {rows.map((row) => {
+        const failed = row.stage === "failed";
+        return (
+          <div
+            key={row.fileId}
+            data-testid="per-file-row"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 110px 80px 60px",
+              padding: "8px 4px",
+              borderBottom: "1px solid var(--border)",
+              alignItems: "center",
+              color: failed ? "var(--error)" : undefined,
+            }}
+          >
+            <span className="t-13" title={row.message || row.fileName}>
+              {row.fileName}
+            </span>
+            <span className="t-12 t-mono t-meta">{row.stage}</span>
+            <span className="t-12 t-mono t-meta">
+              {row.chunks ?? "—"}
+            </span>
+            <span className="t-12 t-mono" style={{ textAlign: "right" }}>
+              {Math.round(row.ratio * 100)}%
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

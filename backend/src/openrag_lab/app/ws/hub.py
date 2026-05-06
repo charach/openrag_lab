@@ -92,3 +92,27 @@ class WebSocketProgressReporter:
                 "message": message,
             },
         )
+
+    async def emit_file(
+        self,
+        *,
+        topic: str,
+        file_id: str,
+        file_name: str,
+        file_stage: str,
+        ratio: float,
+        chunks: int | None = None,
+        message: str = "",
+    ) -> None:
+        await self._hub.publish(
+            topic,
+            {
+                "type": "file_progress",
+                "file_id": file_id,
+                "file_name": file_name,
+                "file_stage": file_stage,
+                "ratio": ratio,
+                "chunks": chunks,
+                "message": message,
+            },
+        )

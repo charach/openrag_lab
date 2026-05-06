@@ -72,8 +72,9 @@ test("A/B matrix: two chunk sizes side by side", async ({ page, request }) => {
   );
   expect(fingerprints.size).toBe(2);
 
-  // Sanity check: navigate to /experiments — without an active workspace
-  // the SPA shows the prompt to pick one; that's the documented behaviour.
+  // Sanity check: the Experiments page renders for the auto-selected
+  // workspace. Shell.tsx picks the first workspace when none is active,
+  // so the page header (rather than the empty state) is what we expect.
   await page.goto("/experiments");
-  await expect(page.getByText("워크스페이스를 먼저 선택하세요.")).toBeVisible();
+  await expect(page.getByText("Compare runs side by side.")).toBeVisible();
 });

@@ -224,6 +224,70 @@ async def test_progress_reporter_receives_per_document_events(
     assert "indexed" in stages
 
 
+async def test_progress_reporter_emits_per_file_stage_transitions(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    ws = _seed_workspace(conn)
+    doc_path = tmp_path / "doc.txt"
+    doc_path.write_text("alpha " * 60, encoding="utf-8")
+    doc = _make_doc(ws.id, doc_path)
+    DocumentRepository(conn).add(doc)
+    svc, _, _ = _build_service(conn)
+    cfg = _exp_config()
+
+    reporter = CollectingProgressReporter()
+    await svc.run(
+        workspace_id=ws.id,
+        documents=[doc],
+        config=cfg,
+        chunking=cfg.chunking,
+        progress=reporter,
+        topic="exp_test",
+    )
+
+    file_stages = [e["file_stage"] for e in reporter.file_events]
+    assert file_stages == ["parsing", "chunking", "embedding", "embedded"]
+    embedded = reporter.file_events[-1]
+    assert embedded["file_id"] == str(doc.id)
+    assert embedded["file_name"] == "doc.txt"
+    assert embedded["chunks"] is not None and int(embedded["chunks"]) > 0
+    assert embedded["ratio"] == 1.0
+
+
+async def test_progress_reporter_emits_skipped_when_already_embedded(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    ws = _seed_workspace(conn)
+    doc_path = tmp_path / "skip.txt"
+    doc_path.write_text("beta " * 50, encoding="utf-8")
+    doc = _make_doc(ws.id, doc_path)
+    DocumentRepository(conn).add(doc)
+    svc, _, _ = _build_service(conn)
+    cfg = _exp_config()
+
+    # First run plants the EMBEDDED checkpoint.
+    await svc.run(
+        workspace_id=ws.id,
+        documents=[doc],
+        config=cfg,
+        chunking=cfg.chunking,
+    )
+
+    reporter = CollectingProgressReporter()
+    await svc.run(
+        workspace_id=ws.id,
+        documents=[doc],
+        config=cfg,
+        chunking=cfg.chunking,
+        progress=reporter,
+        topic="exp_test",
+    )
+
+    file_stages = [e["file_stage"] for e in reporter.file_events]
+    assert file_stages == ["skipped"]
+    assert reporter.file_events[0]["chunks"] is not None
+
+
 async def test_unknown_strategy_raises(conn: sqlite3.Connection, tmp_path: Path) -> None:
     ws = _seed_workspace(conn)
     doc_path = tmp_path / "d.txt"

@@ -148,13 +148,22 @@ class IndexingService:
             )
             if current is not None and current[0] is IndexingStage.EMBEDDED:
                 report.skipped.append(doc.id)
+                chunks = self._chunk_repo.count_for_document(doc.id, chunking.cache_key())
                 await progress.emit(
                     topic=topic, stage="skip", ratio=(i + 1) / total, message=str(doc.id)
+                )
+                await progress.emit_file(
+                    topic=topic,
+                    file_id=str(doc.id),
+                    file_name=doc.source_path.name,
+                    file_stage="skipped",
+                    ratio=1.0,
+                    chunks=chunks,
                 )
                 continue
 
             try:
-                await self._index_one(
+                chunks_written = await self._index_one(
                     workspace_id=workspace_id,
                     doc=doc,
                     config_fingerprint=fp,
@@ -162,11 +171,21 @@ class IndexingService:
                     chunker=chunker,
                     collection=collection,
                     token=token,
+                    progress=progress,
+                    topic=topic,
                 )
             except ParseError as e:
                 report.failed.append((doc.id, e.code))
                 await progress.emit(
                     topic=topic, stage="failed", ratio=(i + 1) / total, message=e.code
+                )
+                await progress.emit_file(
+                    topic=topic,
+                    file_id=str(doc.id),
+                    file_name=doc.source_path.name,
+                    file_stage="failed",
+                    ratio=1.0,
+                    message=e.code,
                 )
                 continue
             except OpenRagError:
@@ -174,11 +193,17 @@ class IndexingService:
                 break
             else:
                 report.indexed.append(doc.id)
-                report.chunks_written += self._chunk_repo.count_for_document(
-                    doc.id, chunking.cache_key()
-                )
+                report.chunks_written += chunks_written
                 await progress.emit(
                     topic=topic, stage="indexed", ratio=(i + 1) / total, message=str(doc.id)
+                )
+                await progress.emit_file(
+                    topic=topic,
+                    file_id=str(doc.id),
+                    file_name=doc.source_path.name,
+                    file_stage="embedded",
+                    ratio=1.0,
+                    chunks=chunks_written,
                 )
 
         return report
@@ -212,8 +237,16 @@ class IndexingService:
         chunker: Chunker,
         collection: str,
         token: CancellationToken,
-    ) -> None:
+        progress: ProgressReporter,
+        topic: str,
+    ) -> int:
+        file_name = doc.source_path.name
+        file_id = str(doc.id)
+
         # 1. parse
+        await progress.emit_file(
+            topic=topic, file_id=file_id, file_name=file_name, file_stage="parsing", ratio=0.0
+        )
         parser = self._pick_parser(doc)
         parsed = await parser.parse(doc)
         token.raise_if_cancelled(stage="parsed")
@@ -226,6 +259,9 @@ class IndexingService:
         )
 
         # 2. chunk (skip persistence if already chunked at this config)
+        await progress.emit_file(
+            topic=topic, file_id=file_id, file_name=file_name, file_stage="chunking", ratio=0.33
+        )
         cfg_key = chunking.cache_key()
         existing = self._chunk_repo.list_for_document(doc.id, cfg_key)
         if existing:
@@ -243,6 +279,14 @@ class IndexingService:
         )
 
         # 3. embed
+        await progress.emit_file(
+            topic=topic,
+            file_id=file_id,
+            file_name=file_name,
+            file_stage="embedding",
+            ratio=0.66,
+            chunks=len(chunks),
+        )
         texts = [c.content for c in chunks]  # type: ignore[attr-defined]
         vectors = await self._embedder.embed_documents(texts)
         token.raise_if_cancelled(stage="embedded")
@@ -268,3 +312,4 @@ class IndexingService:
             status=IndexingStage.EMBEDDED,
             updated_at=datetime.now(UTC),
         )
+        return len(chunks)

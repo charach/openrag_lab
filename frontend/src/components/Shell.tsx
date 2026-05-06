@@ -11,6 +11,7 @@ import { useExternalCallStore } from "../stores/externalCall";
 import { useThemeStore } from "../stores/theme";
 import { useWorkspaceStore } from "../stores/workspace";
 import { ConfigPortModal } from "./ConfigPortModal";
+import { NewWorkspaceModal } from "./modals/NewWorkspaceModal";
 import { Icon, Modal } from "./ui";
 
 const NAV: Array<{ path: string; label: string; icon: Parameters<typeof Icon>[0]["name"] }> = [
@@ -85,20 +86,12 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
 
   const ws = workspaces.find((w) => w.id === activeId) ?? workspaces[0];
 
-  const submitCreate = async (): Promise<void> => {
-    setPending(true);
-    setError(null);
-    try {
-      const created = await api.createWorkspace(draftName);
-      const items = await refreshWorkspaces();
-      setActive(items.find((w) => w.id === created.id)?.id ?? created.id);
-      setModal(null);
-      setDraftName("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed");
-    } finally {
-      setPending(false);
-    }
+  const submitCreate = async (name: string, presetId: string): Promise<void> => {
+    const created = await api.createWorkspace(name, presetId);
+    const items = await refreshWorkspaces();
+    setActive(items.find((w) => w.id === created.id)?.id ?? created.id);
+    setModal(null);
+    setDraftName("");
   };
 
   const submitRename = async (): Promise<void> => {
@@ -577,47 +570,10 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
         {children}
       </div>
       {modal?.kind === "create" && (
-        <Modal
-          title="New workspace"
-          onClose={() => {
-            if (!pending) setModal(null);
-          }}
-          onConfirm={() => {
-            if (!pending && draftName.trim().length > 0) void submitCreate();
-          }}
-          footer={
-            <>
-              <button className="btn" onClick={() => setModal(null)} disabled={pending}>
-                Cancel
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={submitCreate}
-                disabled={pending || draftName.trim().length === 0}
-              >
-                Create
-              </button>
-            </>
-          }
-        >
-          <label className="t-label" style={{ display: "block", marginBottom: 8 }}>
-            Name
-          </label>
-          <input
-            className="input"
-            autoFocus
-            value={draftName}
-            onChange={(e) => setDraftName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submitCreate();
-            }}
-          />
-          {error && (
-            <p style={{ color: "var(--error)", marginTop: 8 }} className="t-12">
-              {error}
-            </p>
-          )}
-        </Modal>
+        <NewWorkspaceModal
+          onCreate={submitCreate}
+          onClose={() => setModal(null)}
+        />
       )}
       {modal?.kind === "rename" && (
         <Modal

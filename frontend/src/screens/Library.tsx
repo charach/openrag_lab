@@ -10,7 +10,7 @@
  * fetch powers both header and table.
  */
 
-import { useEffect, useMemo, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   api,
@@ -18,6 +18,7 @@ import {
   type PresetResponse,
   type WorkspaceConfig,
 } from "../api/client";
+import { DropZone } from "../components/DropZone";
 import {
   ExportModal,
   mimeFor,
@@ -47,7 +48,6 @@ export function Library(): JSX.Element {
   const [workspaceConfig, setWorkspaceConfig] = useState<WorkspaceConfig | null>(null);
   const [presets, setPresets] = useState<PresetEntry[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [drag, setDrag] = useState(false);
 
   const refresh = async (): Promise<void> => {
     if (!workspaceId) return;
@@ -349,9 +349,9 @@ export function Library(): JSX.Element {
         <StatStrip stats={stats} />
 
         <DropZone
-          drag={drag}
-          setDrag={setDrag}
-          uploading={uploading}
+          layout="row"
+          disabled={uploading}
+          disabledCaption="Uploading…"
           onFiles={handleUpload}
         />
 
@@ -757,60 +757,6 @@ function StatusChip({ status }: { status: string }): JSX.Element {
   );
 }
 
-function DropZone({
-  drag,
-  setDrag,
-  uploading,
-  onFiles,
-}: {
-  drag: boolean;
-  setDrag: (v: boolean) => void;
-  uploading: boolean;
-  onFiles: (files: File[]) => void;
-}): JSX.Element {
-  const onDragOver = (e: DragEvent<HTMLLabelElement>): void => {
-    e.preventDefault();
-    setDrag(true);
-  };
-  const onDragLeave = (): void => setDrag(false);
-  const onDrop = (e: DragEvent<HTMLLabelElement>): void => {
-    e.preventDefault();
-    setDrag(false);
-    const dropped = Array.from(e.dataTransfer.files);
-    if (dropped.length > 0) onFiles(dropped);
-  };
-  return (
-    <label
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-      style={{
-        display: "block",
-        border: `1px dashed ${drag ? "var(--accent)" : "var(--border-strong)"}`,
-        background: drag ? "var(--accent-faint)" : "var(--bg-1)",
-        padding: 20,
-        textAlign: "center",
-        cursor: "pointer",
-      }}
-    >
-      <input
-        type="file"
-        multiple
-        style={{ display: "none" }}
-        onChange={(e) => {
-          if (e.target.files) onFiles(Array.from(e.target.files));
-          e.currentTarget.value = "";
-        }}
-      />
-      <div className="row f-center" style={{ justifyContent: "center", gap: 8 }}>
-        <Icon name="upload" size={14} color="var(--text-1)" />
-        <span className="t-13 t-dim">
-          {uploading ? "Uploading…" : "Drop files here, or click to browse"}
-        </span>
-      </div>
-    </label>
-  );
-}
 
 function buildPreview(
   docs: DocumentItem[],
