@@ -148,6 +148,10 @@ class ChromaVectorStore:
         col = await asyncio.to_thread(self._client.get_collection, collection)
         await asyncio.to_thread(col.delete, ids=[str(c) for c in ids])
 
+    async def list_collections(self) -> list[str]:
+        cols = await asyncio.to_thread(self._client.list_collections)
+        return [getattr(c, "name", str(c)) for c in cols]
+
     async def stats(self, collection: str) -> CollectionStats:
         col = await asyncio.to_thread(self._client.get_collection, collection)
         count = await asyncio.to_thread(col.count)

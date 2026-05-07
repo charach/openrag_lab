@@ -101,6 +101,9 @@ class InMemoryVectorStore:
         for cid in ids:
             col.rows.pop(cid, None)
 
+    async def list_collections(self) -> list[str]:
+        return list(self._collections.keys())
+
     async def stats(self, collection: str) -> CollectionStats:
         col = self._must_get(collection)
         return CollectionStats(name=col.name, dim=col.dim, count=len(col.rows), metric=col.metric)

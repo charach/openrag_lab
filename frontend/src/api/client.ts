@@ -380,6 +380,11 @@ export const api = {
   getExperiment: (workspaceId: string, experimentId: string): Promise<ExperimentDetail> =>
     request(`/workspaces/${workspaceId}/experiments/${experimentId}`),
 
+  deleteExperiment: (workspaceId: string, experimentId: string): Promise<void> =>
+    request(`/workspaces/${workspaceId}/experiments/${experimentId}`, {
+      method: "DELETE",
+    }).then(() => undefined),
+
   listGoldenSets: (
     workspaceId: string,
   ): Promise<{ items: Array<{ id: string; name: string; pair_count: number }> }> =>

@@ -21,6 +21,7 @@ const NAV: Array<{ path: string; label: string; icon: Parameters<typeof Icon>[0]
   { path: "/chunking", label: "Chunking Lab", icon: "scissors" },
   { path: "/chat", label: "Chat", icon: "chat" },
   { path: "/experiments", label: "Experiments", icon: "grid" },
+  { path: "/providers", label: "Settings", icon: "settings" },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }): JSX.Element {
@@ -402,7 +403,15 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
         </div>
 
         {/* Nav */}
-        <nav style={{ display: "flex", alignItems: "stretch", flex: 1 }}>
+        <nav
+          style={{
+            display: "flex",
+            alignItems: "stretch",
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+          }}
+        >
           {NAV.map((n) => {
             const active = pathname === n.path;
             return (
@@ -425,6 +434,8 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
                     : "1px solid transparent",
                   marginBottom: -1,
                   letterSpacing: "0.01em",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
                 }}
               >
                 <Icon
@@ -448,6 +459,8 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
             padding: "0 18px",
             borderLeft: "1px solid var(--border)",
             position: "relative",
+            flexShrink: 0,
+            whiteSpace: "nowrap",
           }}
         >
           {profile?.test_mode && (
@@ -477,22 +490,6 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
               <Icon name="yaml" size={14} />
             </button>
           )}
-          <button
-            aria-label="external LLM provider keys"
-            title="External LLM providers — manage API keys"
-            onClick={() => navigate("/providers")}
-            style={{
-              border: 0,
-              background: "transparent",
-              color: pathname === "/providers" ? "var(--accent)" : "var(--text-1)",
-              cursor: "pointer",
-              padding: 4,
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            <Icon name="lock" size={14} />
-          </button>
           <button
             aria-label={`switch to ${theme === "noir" ? "light" : "dark"} theme`}
             title={`Theme: ${theme === "noir" ? "noir (dark)" : "pearl (light)"}`}

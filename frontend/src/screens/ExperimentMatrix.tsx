@@ -9,6 +9,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { useWebSocket, type WSMessage } from "../hooks/useWebSocket";
 import { Icon, Modal } from "../components/ui";
 import { DefineMatrixModal } from "../components/modals/DefineMatrixModal";
+import { confirmModal, useModal } from "../components/providers/ModalProvider";
+import { useToast } from "../components/providers/ToastProvider";
 import { useBatchSessionStore } from "../stores/batchSession";
 import {
   Bar,
@@ -45,6 +47,8 @@ type SortKey = "started_at" | Metric;
 
 export function ExperimentMatrix(): JSX.Element {
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const modal = useModal();
+  const toast = useToast();
   const [experiments, setExperiments] = useState<ExperimentSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("started_at");
@@ -157,6 +161,31 @@ export function ExperimentMatrix(): JSX.Element {
     setEvalError(null);
   };
 
+  const askDeleteExperiment = (exp: ExperimentSummary): void => {
+    if (!workspaceId) return;
+    confirmModal(modal, {
+      title: "Delete experiment?",
+      message: `${exp.id.slice(0, 14)} 를 삭제합니다. 이 실험의 채팅 기록도 함께 사라지며 되돌릴 수 없습니다.`,
+      confirmLabel: "Delete",
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await api.deleteExperiment(workspaceId, exp.id);
+          setExperiments((prev) => prev.filter((x) => x.id !== exp.id));
+          setAbSelection((prev) => prev.filter((x) => x !== exp.id));
+          if (openExp === exp.id) setOpenExp(null);
+          toast.push({
+            eyebrow: "Deleted",
+            message: `experiment ${exp.id.slice(0, 12)} removed.`,
+            kind: "error",
+          });
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      },
+    });
+  };
+
   const toggleAB = (id: string): void => {
     setAbSelection((prev) => {
       if (prev.includes(id)) return prev.filter((x) => x !== id);
@@ -241,8 +270,11 @@ export function ExperimentMatrix(): JSX.Element {
         onLaunched={refreshExperiments}
       />
 
-      <div className="card" style={{ marginTop: 24, padding: 0, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      <div
+        className="card"
+        style={{ marginTop: 24, padding: 0, overflowX: "auto" }}
+      >
+        <table style={{ minWidth: 1080, width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ borderBottom: "1px solid var(--border)" }}>
               <Th label="A/B" />
@@ -268,12 +300,13 @@ export function ExperimentMatrix(): JSX.Element {
                   align="right"
                 />
               ))}
+              <Th label="" />
             </tr>
           </thead>
           <tbody>
             {sorted.length === 0 ? (
               <tr>
-                <td colSpan={4 + 1 + METRICS.length} style={{ padding: 24 }}>
+                <td colSpan={4 + 1 + METRICS.length + 1} style={{ padding: 24 }}>
                   <p className="t-meta t-13">아직 실험이 없습니다.</p>
                 </td>
               </tr>
@@ -377,6 +410,27 @@ export function ExperimentMatrix(): JSX.Element {
                         <ScoreCell value={e.scores[m]} />
                       </Td>
                     ))}
+                    <Td align="right">
+                      <button
+                        type="button"
+                        aria-label={`delete experiment ${e.id.slice(0, 8)}`}
+                        title="Delete experiment"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          askDeleteExperiment(e);
+                        }}
+                        className="btn-ghost"
+                        style={{
+                          border: 0,
+                          background: "transparent",
+                          padding: 4,
+                          cursor: "pointer",
+                          color: "var(--text-2)",
+                        }}
+                      >
+                        <Icon name="trash" size={11} />
+                      </button>
+                    </Td>
                   </tr>
                 );
               })

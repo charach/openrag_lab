@@ -81,9 +81,10 @@ export function ChunkingLab(): JSX.Element {
   const [loading, setLoading] = useState(false);
   const [workspaceConfig, setWorkspaceConfig] = useState<WorkspaceConfig | null>(null);
   const [presets, setPresets] = useState<PresetEntry[]>([]);
-  const [visibleCount, setVisibleCount] = useState(50);
+  const PAGE_SIZE = 30;
+  const FETCH_BATCH = 240;
+  const [page, setPage] = useState(1);
   const [hoverChunk, setHoverChunk] = useState<number | null>(null);
-  const [showOverlap, setShowOverlap] = useState(true);
 
   const deferredSize = useDeferredValue(chunkSize);
   const deferredOverlap = useDeferredValue(chunkOverlap);
@@ -274,7 +275,7 @@ export function ChunkingLab(): JSX.Element {
             chunk_size: deferredSize,
             chunk_overlap: deferredOverlap,
           },
-          max_chunks: visibleCount,
+          max_chunks: FETCH_BATCH,
         })
         .then((r) => {
           setPreview(r);
@@ -284,12 +285,12 @@ export function ChunkingLab(): JSX.Element {
         .finally(() => setLoading(false));
     }, 200);
     return () => window.clearTimeout(handle);
-  }, [workspaceId, docId, strategy, deferredSize, deferredOverlap, visibleCount]);
+  }, [workspaceId, docId, strategy, deferredSize, deferredOverlap]);
 
-  // When config changes, reset paging — old visibleCount is meaningless under
-  // a new chunk size.
+  // When config changes, reset paging — old page is meaningless under a new
+  // chunk size.
   useEffect(() => {
-    setVisibleCount(50);
+    setPage(1);
   }, [docId, strategy, chunkSize, chunkOverlap]);
 
   const documentTotalChars = preview?.stats?.document_total_chars ?? 0;
@@ -369,8 +370,6 @@ export function ChunkingLab(): JSX.Element {
           stats={stats}
           chunkCount={preview?.chunks.length ?? 0}
           computing={computing}
-          showOverlap={showOverlap}
-          setShowOverlap={setShowOverlap}
         />
 
         <div className="col gap-16">
@@ -416,12 +415,11 @@ export function ChunkingLab(): JSX.Element {
 
           <ChunkProse
             chunks={chunks}
-            overlap={overlap}
-            visibleCount={visibleCount}
-            onLoadMore={() => setVisibleCount((n) => n + 50)}
+            page={page}
+            pageSize={PAGE_SIZE}
+            onPage={setPage}
             hoverIndex={hoverChunk}
             setHoverIndex={setHoverChunk}
-            showOverlap={showOverlap}
           />
 
           {hoverChunk !== null && chunks[hoverChunk] && (
@@ -451,8 +449,6 @@ function ControlsPanel(props: {
   stats: ChunkPreviewResponse["stats"] | undefined;
   chunkCount: number;
   computing: boolean;
-  showOverlap: boolean;
-  setShowOverlap: (v: boolean) => void;
 }): JSX.Element {
   const { documents, docId, setDocId, strategy, setStrategy } = props;
   return (
@@ -548,16 +544,6 @@ function ControlsPanel(props: {
         unit="tokens"
         onChange={props.setChunkOverlap}
       />
-
-      <label className="row gap-6 f-center t-12 t-meta" style={{ cursor: "pointer" }}>
-        <input
-          type="checkbox"
-          checked={props.showOverlap}
-          onChange={(e) => props.setShowOverlap(e.target.checked)}
-          style={{ accentColor: "var(--accent)" }}
-        />
-        Show overlap stripes
-      </label>
 
       <div className="col gap-8">
         <div className="row f-between f-center">
@@ -838,22 +824,65 @@ export function tintFromColor(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+interface ProseSegment {
+  start: number;
+  end: number;
+  text: string;
+  owners: number[];
+}
+
+/**
+ * Merge the chunk list into non-overlapping prose segments. Each segment
+ * carries the indices of every chunk that covers its character range —
+ * one for non-overlap regions, two for overlap regions. The result lets
+ * us render each character exactly once while still attributing it to
+ * the chunk(s) it belongs to.
+ */
+export function computeSegments(chunks: ChunkPreviewItem[]): ProseSegment[] {
+  if (chunks.length === 0) return [];
+  const points = new Set<number>();
+  for (const c of chunks) {
+    points.add(c.char_offset);
+    points.add(c.char_offset + c.char_length);
+  }
+  const sorted = Array.from(points).sort((a, b) => a - b);
+  const out: ProseSegment[] = [];
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const start = sorted[i]!;
+    const end = sorted[i + 1]!;
+    if (end <= start) continue;
+    const owners: number[] = [];
+    let text = "";
+    for (let idx = 0; idx < chunks.length; idx++) {
+      const c = chunks[idx]!;
+      const cStart = c.char_offset;
+      const cEnd = cStart + c.char_length;
+      if (cStart <= start && cEnd >= end) {
+        owners.push(idx);
+        if (!text) text = c.content.slice(start - cStart, end - cStart);
+      }
+    }
+    if (owners.length > 0) {
+      out.push({ start, end, text, owners });
+    }
+  }
+  return out;
+}
+
 function ChunkProse({
   chunks,
-  overlap,
-  visibleCount,
-  onLoadMore,
+  page,
+  pageSize,
+  onPage,
   hoverIndex,
   setHoverIndex,
-  showOverlap,
 }: {
   chunks: ChunkPreviewItem[];
-  overlap: OverlapRegion[];
-  visibleCount: number;
-  onLoadMore: () => void;
+  page: number;
+  pageSize: number;
+  onPage: (n: number) => void;
   hoverIndex: number | null;
   setHoverIndex: (i: number | null) => void;
-  showOverlap: boolean;
 }): JSX.Element | null {
   if (chunks.length === 0) {
     return (
@@ -864,8 +893,12 @@ function ChunkProse({
   }
 
   const total = chunks.length;
-  const shown = Math.min(visibleCount, total);
-  const visibleChunks = chunks.slice(0, shown);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const startIdx = (safePage - 1) * pageSize;
+  const endIdx = Math.min(startIdx + pageSize, total);
+  const pageChunks = chunks.slice(startIdx, endIdx);
+  const segments = useMemo(() => computeSegments(pageChunks), [pageChunks]);
 
   return (
     <div className="col gap-12">
@@ -879,134 +912,78 @@ function ChunkProse({
           color: "var(--text-0)",
         }}
       >
-        {visibleChunks.map((c, i) => {
-          const o = overlap[i] ?? { head: 0, tail: 0 };
-          const isHover = hoverIndex === i;
-          const baseTint = tintFromColor(c.color_hint, isHover ? 0.42 : 0.22);
+        {segments.map((seg, i) => {
+          const globalOwners = seg.owners.map((o) => o + startIdx);
+          const primaryGlobal = globalOwners[0]!;
+          const primary = chunks[primaryGlobal];
+          if (!primary) return null;
+          const isHover =
+            hoverIndex !== null && globalOwners.includes(hoverIndex);
+          const isOverlap = globalOwners.length > 1;
+          const baseAlpha = isHover ? 0.42 : isOverlap ? 0.32 : 0.18;
+          const background = isOverlap
+            ? `repeating-linear-gradient(135deg, ${tintFromColor(
+                chunks[globalOwners[0]!]!.color_hint,
+                baseAlpha,
+              )} 0 4px, ${tintFromColor(
+                chunks[globalOwners[1]!]?.color_hint ?? primary.color_hint,
+                baseAlpha,
+              )} 4px 8px)`
+            : tintFromColor(primary.color_hint, baseAlpha);
           return (
-            <ChunkSpan
-              key={c.sequence}
-              chunk={c}
-              index={i}
-              tint={baseTint}
-              overlap={o}
-              prevColor={
-                i > 0 ? chunks[i - 1]!.color_hint : null
+            <span
+              key={`${seg.start}-${seg.end}-${i}`}
+              onMouseEnter={() => setHoverIndex(primaryGlobal)}
+              onMouseLeave={() =>
+                hoverIndex === primaryGlobal ? setHoverIndex(null) : undefined
               }
-              nextColor={
-                i < chunks.length - 1 ? chunks[i + 1]!.color_hint : null
+              style={{
+                background,
+                padding: "2px 0",
+                whiteSpace: "pre-wrap",
+                outline: isHover ? "1px solid var(--accent)" : "none",
+                outlineOffset: 1,
+                transition: "background 120ms, outline 120ms",
+                cursor: "default",
+              }}
+              title={
+                isOverlap
+                  ? `chunks ${globalOwners
+                      .map((o) => String(o).padStart(2, "0"))
+                      .join(" + ")} (overlap)`
+                  : `chunk ${String(primaryGlobal).padStart(2, "0")}`
               }
-              showOverlap={showOverlap}
-              hovered={isHover}
-              onEnter={() => setHoverIndex(i)}
-              onLeave={() => setHoverIndex(null)}
-            />
+            >
+              {seg.text}
+            </span>
           );
         })}
       </div>
       <div className="row f-between f-center">
         <span className="t-12 t-meta">
-          {shown} / {total} chunks
+          chunks {startIdx + 1}–{endIdx} / {total}
         </span>
-        {total > shown && (
-          <button className="btn btn-sm" onClick={onLoadMore}>
-            <Icon name="down" size={11} /> 더 보기 (+50)
+        <div className="row gap-6 f-center">
+          <button
+            className="btn btn-sm"
+            disabled={safePage <= 1}
+            onClick={() => onPage(safePage - 1)}
+          >
+            ← Prev
           </button>
-        )}
+          <span className="t-12 t-mono t-meta">
+            {safePage} / {totalPages}
+          </span>
+          <button
+            className="btn btn-sm"
+            disabled={safePage >= totalPages}
+            onClick={() => onPage(safePage + 1)}
+          >
+            Next →
+          </button>
+        </div>
       </div>
     </div>
-  );
-}
-
-function ChunkSpan({
-  chunk,
-  index,
-  tint,
-  overlap,
-  prevColor,
-  nextColor,
-  showOverlap,
-  hovered,
-  onEnter,
-  onLeave,
-}: {
-  chunk: ChunkPreviewItem;
-  index: number;
-  tint: string;
-  overlap: OverlapRegion;
-  prevColor: string | null;
-  nextColor: string | null;
-  showOverlap: boolean;
-  hovered: boolean;
-  onEnter: () => void;
-  onLeave: () => void;
-}): JSX.Element {
-  const headLen = showOverlap ? Math.min(overlap.head, chunk.content.length) : 0;
-  const tailLen = showOverlap
-    ? Math.min(overlap.tail, Math.max(0, chunk.content.length - headLen))
-    : 0;
-  const head = chunk.content.slice(0, headLen);
-  const body = chunk.content.slice(headLen, chunk.content.length - tailLen);
-  const tail = chunk.content.slice(chunk.content.length - tailLen);
-
-  const stripeWith = (a: string, b: string): string =>
-    `repeating-linear-gradient(135deg, ${tintFromColor(a, 0.4)} 0 4px, ${tintFromColor(b, 0.4)} 4px 8px)`;
-
-  return (
-    <span
-      onMouseEnter={onEnter}
-      onMouseLeave={onLeave}
-      style={{
-        position: "relative",
-        display: "inline",
-        cursor: "default",
-        outline: hovered ? "1px solid var(--accent)" : "none",
-        outlineOffset: 1,
-        transition: "outline 120ms",
-      }}
-    >
-      <sup
-        className="t-mono"
-        style={{
-          fontSize: 9,
-          color: hovered ? "var(--accent)" : "var(--text-2)",
-          marginRight: 2,
-          userSelect: "none",
-        }}
-      >
-        {String(index).padStart(2, "0")}
-      </sup>
-      {head && prevColor && (
-        <span
-          style={{
-            background: stripeWith(prevColor, chunk.color_hint),
-            padding: "2px 0",
-          }}
-        >
-          {head}
-        </span>
-      )}
-      <span
-        style={{
-          background: tint,
-          padding: "2px 0",
-          whiteSpace: "pre-wrap",
-          transition: "background 120ms",
-        }}
-      >
-        {body}
-      </span>
-      {tail && nextColor && (
-        <span
-          style={{
-            background: stripeWith(chunk.color_hint, nextColor),
-            padding: "2px 0",
-          }}
-        >
-          {tail}
-        </span>
-      )}
-    </span>
   );
 }
 

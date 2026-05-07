@@ -712,13 +712,30 @@ function TurnCard({
                 이 실험은 LLM이 설정되지 않아 답변 생성을 건너뜁니다. 아래에서 검색된 청크를 확인하세요.
               </span>
             </div>
-            <span className="t-12 t-meta">
-              답변 생성을 켜려면{" "}
-              <Link to="/providers" style={{ color: "var(--accent)" }}>
-                외부 LLM 키 등록
-              </Link>{" "}
-              후 Auto-Pilot에서 LLM 포함 프리셋을 골라 재인덱싱하세요.
-            </span>
+            <div className="col gap-6 t-12 t-meta" style={{ lineHeight: 1.55 }}>
+              <span>답변 생성을 켜려면 다음 중 하나를 고르세요:</span>
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                <li>
+                  <strong>로컬 LLM</strong> — 하드웨어에 따라 추천:
+                  <span className="t-mono"> qwen2.5:3b</span>(8GB↓),
+                  <span className="t-mono"> llama3.1:8b</span>(16GB↑),
+                  <span className="t-mono"> qwen2.5:14b</span>(32GB↑). Auto-Pilot의
+                  LLM 포함 프리셋을 선택하면 자동 다운로드됩니다.
+                </li>
+                <li>
+                  <strong>Ollama / 사용자 정의 엔드포인트</strong> — curl 호출이 가능한 OpenAI
+                  호환 서버라면 무엇이든 사용 가능합니다.{" "}
+                  <Link to="/providers" style={{ color: "var(--accent)" }}>
+                    Settings → External LLM providers
+                  </Link>
+                  에서 base URL과 모델명을 등록하세요.
+                </li>
+                <li>
+                  <strong>외부 API</strong> — Anthropic / OpenAI / Google 키 등록 후
+                  Auto-Pilot에서 해당 LLM 프리셋을 골라 재인덱싱.
+                </li>
+              </ul>
+            </div>
           </div>
         ) : (
           <div

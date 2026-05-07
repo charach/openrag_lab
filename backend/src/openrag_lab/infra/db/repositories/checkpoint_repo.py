@@ -86,3 +86,20 @@ class IndexingCheckpointRepository:
         )
         self._conn.commit()
         return cur.rowcount
+
+    def clear_for_document(
+        self, workspace_id: WorkspaceId, document_id: DocumentId
+    ) -> int:
+        """Drop every checkpoint row for one document.
+
+        Called from the document-delete path so a future re-upload of the
+        same content hash isn't fooled into thinking the prior work is
+        still valid (the chunks have been removed).
+        """
+        cur = self._conn.execute(
+            "DELETE FROM indexing_checkpoint "
+            "WHERE workspace_id = ? AND document_id = ?",
+            (str(workspace_id), str(document_id)),
+        )
+        self._conn.commit()
+        return cur.rowcount

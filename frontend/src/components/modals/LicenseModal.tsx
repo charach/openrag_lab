@@ -30,8 +30,9 @@ export function LicenseModal({
   close,
 }: LicenseModalProps): JSX.Element {
   const [accepted, setAccepted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   return (
-    <div className="col gap-14">
+    <div className="col gap-14" style={{ position: "relative" }}>
       <div className="card" style={{ padding: 14, background: "var(--bg-0)" }}>
         <div className="row f-between f-center">
           <span className="t-13">{model.name}</span>
@@ -64,6 +65,7 @@ export function LicenseModal({
           data-testid="license-accept-checkbox"
           checked={accepted}
           onChange={(e) => setAccepted(e.target.checked)}
+          disabled={submitting}
           style={{ accentColor: "var(--accent)" }}
         />
         라이선스 본문을 읽고 동의합니다.
@@ -86,22 +88,50 @@ export function LicenseModal({
           <span />
         )}
         <div className="row gap-8">
-          <button className="btn btn-sm" onClick={close}>
+          <button className="btn btn-sm" onClick={close} disabled={submitting}>
             Cancel
           </button>
           <button
             className="btn btn-sm btn-primary"
             data-testid="license-accept-confirm"
-            disabled={!accepted}
+            disabled={!accepted || submitting}
             onClick={async () => {
-              await onAccept?.();
-              close();
+              setSubmitting(true);
+              try {
+                await onAccept?.();
+                close();
+              } finally {
+                setSubmitting(false);
+              }
             }}
           >
-            Accept &amp; download
+            {submitting ? "Accepting…" : "Accept & download"}
           </button>
         </div>
       </div>
+      {submitting && (
+        <div
+          aria-live="polite"
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            backdropFilter: "blur(2px)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 10,
+            zIndex: 5,
+          }}
+        >
+          <span className="dot dot-gold pulse-gold"></span>
+          <span className="t-13" style={{ color: "var(--text-0)" }}>
+            라이선스 등록 후 모델 다운로드 준비 중…
+          </span>
+          <span className="t-12 t-meta">잠시만 기다려 주세요. 인덱싱이 곧 시작됩니다.</span>
+        </div>
+      )}
     </div>
   );
 }

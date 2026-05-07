@@ -85,6 +85,78 @@ def test_delete_document(app_state: AppState) -> None:
         assert items == []
 
 
+def test_delete_document_cascades_chunks_and_checkpoints(app_state: AppState) -> None:
+    """Deleting a doc must wipe its chunks and indexing-checkpoint rows.
+
+    Otherwise a re-upload of the same content hash would resume from a
+    stale checkpoint that points at chunks the doc no longer owns.
+    """
+    import sqlite3
+
+    from openrag_lab.app.main import create_app
+    from openrag_lab.app.services.workspace_registry import WorkspaceRegistry
+    from openrag_lab.domain.models.ids import WorkspaceId
+
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        upload = _upload(client, ws, ("x.txt", "the quick brown fox " * 10))
+        doc_id = upload["uploaded"][0]["id"]
+
+        # Run an indexing pass so chunks + checkpoint rows actually exist.
+        accepted = client.post(
+            f"/workspaces/{ws}/index",
+            json={
+                "config": {
+                    "embedder_id": "fake-embedder",
+                    "chunking": {
+                        "strategy": "recursive",
+                        "chunk_size": 64,
+                        "chunk_overlap": 0,
+                    },
+                    "retrieval_strategy": "dense",
+                    "top_k": 3,
+                    "llm_id": None,
+                },
+                "force_reindex": True,
+            },
+        ).json()
+        for _ in range(200):
+            t = client.get(f"/tasks/{accepted['task_id']}").json()
+            if t["status"] not in {"pending", "running"}:
+                assert t["status"] == "completed", t
+                break
+
+        # Sanity: chunk rows exist before delete.
+        registry = WorkspaceRegistry(app_state.layout)
+        with registry.open(WorkspaceId(ws)) as conn:
+            chunks_before = conn.execute(
+                "SELECT COUNT(*) AS n FROM chunk WHERE document_id = ?",
+                (doc_id,),
+            ).fetchone()["n"]
+            checkpoints_before = conn.execute(
+                "SELECT COUNT(*) AS n FROM indexing_checkpoint WHERE document_id = ?",
+                (doc_id,),
+            ).fetchone()["n"]
+        assert chunks_before > 0
+        assert checkpoints_before > 0
+
+        del_resp = client.delete(f"/workspaces/{ws}/documents/{doc_id}")
+        assert del_resp.status_code == 204
+
+        with registry.open(WorkspaceId(ws)) as conn:
+            conn.row_factory = sqlite3.Row
+            chunks_after = conn.execute(
+                "SELECT COUNT(*) AS n FROM chunk WHERE document_id = ?",
+                (doc_id,),
+            ).fetchone()["n"]
+            checkpoints_after = conn.execute(
+                "SELECT COUNT(*) AS n FROM indexing_checkpoint WHERE document_id = ?",
+                (doc_id,),
+            ).fetchone()["n"]
+        assert chunks_after == 0
+        assert checkpoints_after == 0
+
+
 def test_delete_unknown_document_returns_404(app_state: AppState) -> None:
     with TestClient(create_app(state=app_state)) as client:
         ws = _create_ws(client)

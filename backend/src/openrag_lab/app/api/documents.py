@@ -25,6 +25,9 @@ from openrag_lab.domain.models.chunk import ChunkingConfig
 from openrag_lab.domain.models.document import Document
 from openrag_lab.domain.models.enums import ChunkingStrategy
 from openrag_lab.domain.models.ids import DocumentId, WorkspaceId, new_document_id
+from openrag_lab.infra.db.repositories.checkpoint_repo import (
+    IndexingCheckpointRepository,
+)
 from openrag_lab.infra.db.repositories.document_repo import DocumentRepository
 from openrag_lab.infra.fs.workspace_layout import is_inside
 
@@ -359,13 +362,63 @@ async def delete_document(
                 recoverable=False,
                 details={"document_id": document_id},
             )
+        # Collect chunk ids before the FK cascade wipes them — we need
+        # them to evict the matching vectors from the vector store. The
+        # chunk table has ``ON DELETE CASCADE`` on the document FK, so the
+        # rows themselves get cleaned by the upcoming repo.delete() call.
+        chunk_ids = [
+            row["id"]
+            for row in conn.execute(
+                "SELECT id FROM chunk WHERE document_id = ?",
+                (str(doc_id),),
+            ).fetchall()
+        ]
         repo.delete(doc_id)
+        IndexingCheckpointRepository(conn).clear_for_document(ws_id, doc_id)
+    # Vectors live outside the SQLite cascade, so wipe them per
+    # collection (one per embedder) on a best-effort basis. We avoid
+    # wiring the full Runtime here — that would require a config — and
+    # instead delete from every collection the workspace's vector store
+    # currently knows about.
+    if chunk_ids:
+        try:
+            await _evict_vectors(state, ws_id, chunk_ids)
+        except Exception:  # pragma: no cover - vector store best-effort
+            pass
     # Best-effort source file cleanup.
     try:
         if doc.source_path.exists():
             doc.source_path.unlink()
     except OSError:
         pass
+
+
+async def _evict_vectors(
+    state: AppState, workspace_id: WorkspaceId, chunk_ids: list[str]
+) -> None:
+    """Remove ``chunk_ids`` from every collection in the workspace store.
+
+    The vector store interface accepts a collection name plus a list of
+    chunk ids. We don't track which collections actually hold which
+    chunks (each indexing run uses a deterministic name keyed by the
+    embedder + chunking config), so we issue a delete to every known
+    collection — non-existent ids are no-ops on both Chroma and the
+    in-memory adapter.
+    """
+    factory = state.factories.vector_store
+    paths = WorkspaceRegistry(state.layout).paths_for(workspace_id)
+    store = factory(workspace_id, paths.vectors_dir)
+    if not hasattr(store, "list_collections"):
+        return
+    collections = await store.list_collections()  # type: ignore[attr-defined]
+    from openrag_lab.domain.models.ids import ChunkId
+
+    typed_ids = [ChunkId(cid) for cid in chunk_ids]
+    for collection in collections:
+        try:
+            await store.delete(collection, typed_ids)
+        except Exception:  # pragma: no cover - per-collection best-effort
+            continue
 
 
 @router.post("/workspaces/{workspace_id}/chunking/preview")

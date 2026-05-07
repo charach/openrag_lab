@@ -158,6 +158,42 @@ async def get_experiment(
     return _serialize_detail(result)
 
 
+@router.delete(
+    "/workspaces/{workspace_id}/experiments/{experiment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_experiment(
+    workspace_id: str,
+    experiment_id: str,
+    state: Annotated[AppState, Depends(get_state)],
+) -> None:
+    """Permanently delete an experiment row + its chat turns.
+
+    Cancelling a running experiment is a separate concern (handled by the
+    existing tasks API). This endpoint is for the *historical* row in
+    the matrix view; it does not stop an in-flight job.
+    """
+    registry = _registry(state)
+    ws_id = WorkspaceId(workspace_id)
+    _require_workspace(registry, ws_id)
+    with registry.open(ws_id) as conn:
+        from openrag_lab.infra.db.repositories.experiment_repo import (
+            ExperimentRepository,
+        )
+
+        repo = ExperimentRepository(conn)
+        existing = repo.get(ExperimentId(experiment_id))
+        if existing is None or existing.workspace_id != ws_id:
+            raise HttpError(
+                status_code=404,
+                code="EXPERIMENT_NOT_FOUND",
+                message="실험을 찾을 수 없습니다.",
+                recoverable=False,
+                details={"experiment_id": experiment_id},
+            )
+        repo.delete(ExperimentId(experiment_id))
+
+
 @router.post(
     "/workspaces/{workspace_id}/experiments/{experiment_id}/evaluate",
     status_code=status.HTTP_202_ACCEPTED,

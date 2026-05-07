@@ -201,25 +201,60 @@ export function confirmModal(
       </p>
     ),
     footer: ({ close }) => (
-      <>
-        <button className="btn btn-sm" onClick={close}>
-          Cancel
-        </button>
-        <button
-          className={"btn btn-sm " + (danger ? "" : "btn-primary")}
-          style={
-            danger
-              ? { borderColor: "var(--error)", color: "var(--error)" }
-              : undefined
-          }
-          onClick={() => {
-            void onConfirm?.();
-            close();
-          }}
-        >
-          {confirmLabel}
-        </button>
-      </>
+      <ConfirmFooter
+        confirmLabel={confirmLabel}
+        danger={danger}
+        {...(onConfirm ? { onConfirm } : {})}
+        close={close}
+      />
     ),
   });
+}
+
+/**
+ * Footer used by ``confirmModal``. Tracks a local "submitting" state so the
+ * primary button shows "Working…" while ``onConfirm`` is in flight, and
+ * blocks Cancel until the async action resolves. Without this, the modal
+ * closes immediately and the user gets no signal that something is
+ * happening — a common complaint for slow ops like Run-as-experiment.
+ */
+function ConfirmFooter({
+  confirmLabel,
+  danger,
+  onConfirm,
+  close,
+}: {
+  confirmLabel: string;
+  danger: boolean;
+  onConfirm?: () => void | Promise<void>;
+  close: () => void;
+}): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  return (
+    <>
+      <button className="btn btn-sm" onClick={close} disabled={busy}>
+        Cancel
+      </button>
+      <button
+        className={"btn btn-sm " + (danger ? "" : "btn-primary")}
+        style={
+          danger
+            ? { borderColor: "var(--error)", color: "var(--error)" }
+            : undefined
+        }
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await onConfirm?.();
+          } finally {
+            setBusy(false);
+            close();
+          }
+        }}
+      >
+        {busy ? "Working…" : confirmLabel}
+      </button>
+    </>
+  );
 }

@@ -108,6 +108,19 @@ class ExperimentRepository:
             ).fetchall()
         return [_row_to_result(r) for r in rows]
 
+    def delete(self, experiment_id: ExperimentId) -> int:
+        """Permanently remove an experiment row.
+
+        SQLite cascades remove the dependent ``chat_turn`` rows via the
+        ``ON DELETE CASCADE`` foreign key — no need to wipe them by hand.
+        """
+        cur = self._conn.execute(
+            "DELETE FROM experiment WHERE id = ?",
+            (str(experiment_id),),
+        )
+        self._conn.commit()
+        return cur.rowcount
+
     def archive_for_workspace(self, workspace_id: WorkspaceId) -> int:
         cur = self._conn.execute(
             "UPDATE experiment SET archived = 1 WHERE workspace_id = ?",
