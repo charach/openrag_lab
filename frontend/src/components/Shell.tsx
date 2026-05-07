@@ -4,9 +4,10 @@
  * dropdowns, last-known system profile).
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, type SystemProfileResponse, type WorkspaceSummary } from "../api/client";
+import { useWebSocket } from "../hooks/useWebSocket";
 import { useExternalCallStore } from "../stores/externalCall";
 import { useThemeStore } from "../stores/theme";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -30,6 +31,25 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
   const theme = useThemeStore((s) => s.theme);
   const toggleTheme = useThemeStore((s) => s.toggle);
   const externalCall = useExternalCallStore((s) => s.call);
+  const externalBegin = useExternalCallStore((s) => s.begin);
+  const externalEnd = useExternalCallStore((s) => s.end);
+
+  // Single global subscription for external-LLM call boundaries. Anything
+  // that wraps its LLM with PublishingLLM (chat today, evaluator next)
+  // turns the header dot on/off without each surface owning the toggle.
+  const externalTopics = useMemo(() => ["external_calls"], []);
+  useWebSocket({
+    topics: externalTopics,
+    onMessage: (msg) => {
+      if (msg.type === "external_call_started") {
+        const provider = typeof msg.provider === "string" ? msg.provider : "external";
+        const model = typeof msg.model === "string" ? msg.model : "";
+        externalBegin(provider, model || "generation");
+      } else if (msg.type === "external_call_completed") {
+        externalEnd();
+      }
+    },
+  });
 
   const [profile, setProfile] = useState<SystemProfileResponse | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);

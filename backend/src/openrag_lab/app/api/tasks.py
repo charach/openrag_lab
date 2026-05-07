@@ -20,6 +20,7 @@ def _serialize(handle: TaskHandle, kind: str) -> dict[str, Any]:
         "id": str(handle.id),
         "kind": kind,
         "status": _public_status(handle.state),
+        "paused": handle.pause_signal.is_paused,
         "started_at": handle.started_at.isoformat() if handle.started_at else None,
         "completed_at": handle.completed_at.isoformat() if handle.completed_at else None,
         "estimated_completion_at": None,
@@ -76,3 +77,56 @@ async def cancel_task(
         )
     state.task_queue.cancel(TaskId(task_id))
     return {"cancelled": True, "task_id": task_id}
+
+
+@router.post("/{task_id}/pause")
+async def pause_task(
+    task_id: str,
+    state: Annotated[AppState, Depends(get_state)],
+) -> dict[str, Any]:
+    handle = state.task_queue.status(TaskId(task_id))
+    if handle is None:
+        raise HttpError(
+            status_code=404,
+            code="TASK_NOT_FOUND",
+            message="작업을 찾을 수 없습니다.",
+            recoverable=False,
+            details={"task_id": task_id},
+        )
+    # Pause is idempotent on terminal tasks — the user click can race a
+    # fast-finishing job and we don't want a flapping 409 in the UI.
+    handle.pause_signal.pause()
+    if handle.state not in {TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED}:
+        meta = state.task_metadata.get(TaskId(task_id))
+        if meta is not None and meta.websocket_topic:
+            await state.hub.publish(
+                meta.websocket_topic, {"type": "paused", "task_id": task_id}
+            )
+    return {"paused": True, "task_id": task_id}
+
+
+@router.post("/{task_id}/resume")
+async def resume_task(
+    task_id: str,
+    state: Annotated[AppState, Depends(get_state)],
+) -> dict[str, Any]:
+    handle = state.task_queue.status(TaskId(task_id))
+    if handle is None:
+        raise HttpError(
+            status_code=404,
+            code="TASK_NOT_FOUND",
+            message="작업을 찾을 수 없습니다.",
+            recoverable=False,
+            details={"task_id": task_id},
+        )
+    # Resume is idempotent and harmless on terminal tasks: the signal
+    # gets cleared so the paused flag in /tasks/{id} responses stops
+    # lingering after the work has actually finished.
+    handle.pause_signal.resume()
+    if handle.state not in {TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED}:
+        meta = state.task_metadata.get(TaskId(task_id))
+        if meta is not None and meta.websocket_topic:
+            await state.hub.publish(
+                meta.websocket_topic, {"type": "resumed", "task_id": task_id}
+            )
+    return {"resumed": True, "task_id": task_id}

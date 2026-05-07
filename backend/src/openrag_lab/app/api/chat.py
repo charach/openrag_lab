@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from openrag_lab.app.dependencies import get_state
 from openrag_lab.app.errors import HttpError
+from openrag_lab.app.services.external_call_publisher import PublishingLLM
 from openrag_lab.app.services.runtime import build_runtime
 from openrag_lab.app.services.workspace_registry import WorkspaceRegistry
 from openrag_lab.app.state import AppState
@@ -107,6 +108,12 @@ async def chat(
         retrieval.register_chunks(all_chunks)
 
         llm = None if config.is_retrieval_only else state.factories.llm(config.llm_id or "")
+        if llm is not None and not llm.is_local:
+            llm = PublishingLLM(
+                inner=llm,
+                hub=state.hub,
+                scope={"experiment_id": str(body.experiment_id)},
+            )
         pipeline = RAGPipeline(retrieval=retrieval, llm=llm, config=config)
         output = await pipeline.answer(body.question)
     finally:

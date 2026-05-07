@@ -26,7 +26,7 @@ from openrag_lab.domain.models.ids import (
     WorkspaceId,
     new_experiment_id,
 )
-from openrag_lab.domain.services.cancellation import CancellationToken
+from openrag_lab.domain.services.cancellation import CancellationToken, PauseSignal
 from openrag_lab.domain.services.indexing import IndexingService
 from openrag_lab.domain.services.task_queue import TaskState
 
@@ -175,7 +175,7 @@ async def start_indexing(
         checkpoint_repo=runtime.checkpoint_repo,
     )
 
-    async def _job(token: CancellationToken) -> None:
+    async def _job(token: CancellationToken, pause_signal: PauseSignal) -> None:
         try:
             await state.hub.publish(
                 topic,
@@ -187,6 +187,7 @@ async def start_indexing(
                 config=config,
                 chunking=config.chunking,
                 token=token,
+                pause_signal=pause_signal,
                 progress=reporter,
                 topic=topic,
             )

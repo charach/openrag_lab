@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from openrag_lab.app.services.license_store import LicenseStore
 from openrag_lab.app.services.runtime import RuntimeFactories, default_factories
 from openrag_lab.app.ws.hub import WebSocketHub
 from openrag_lab.config.settings import GlobalSettings, default_settings
@@ -41,6 +42,16 @@ class AppState:
     # Shared async HTTP client used by external LLM adapters. ``None`` in
     # tests / test-mode boot — closed by the FastAPI lifespan when set.
     http_client: httpx.AsyncClient | None = None
+    # Lazy-initialised on first access via ``license_store_for(state)``.
+    _license_store: LicenseStore | None = None
+
+
+def license_store_for(state: AppState) -> LicenseStore:
+    """Lazy accessor — the store needs ``layout.root`` which the test
+    fixtures only fully populate after construction."""
+    if state._license_store is None:
+        state._license_store = LicenseStore(root=state.layout.root)
+    return state._license_store
 
 
 @dataclass

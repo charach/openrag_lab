@@ -25,11 +25,17 @@ class WebSocketHub:
     The hub never blocks publishers: a slow subscriber's queue grows up to
     ``queue_max`` items, then older messages are dropped (per API_SPEC §14.5
     backpressure rules). The lock guards subscription mutations only.
+
+    Each topic also retains its most recently published message. New
+    subscribers receive that cached message immediately on subscribe,
+    so a fast-finishing producer (e.g. an indexing task that completes
+    before the client's WS subscribe ack) cannot strand the UI.
     """
 
     def __init__(self, *, queue_max: int = 100) -> None:
         self._queue_max = queue_max
         self._subscribers: set[_Subscriber] = set()
+        self._last_message: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
     async def attach(self) -> _Subscriber:
@@ -43,9 +49,18 @@ class WebSocketHub:
             self._subscribers.discard(sub)
 
     async def subscribe(self, sub: _Subscriber, topics: list[str]) -> list[str]:
+        replays: list[dict[str, Any]] = []
         async with self._lock:
+            new_topics = [t for t in topics if t not in sub.topics]
             sub.topics.update(topics)
-            return sorted(sub.topics)
+            for topic in new_topics:
+                cached = self._last_message.get(topic)
+                if cached is not None:
+                    replays.append(cached)
+            active = sorted(sub.topics)
+        for message in replays:
+            self._enqueue(sub, message)
+        return active
 
     async def unsubscribe(self, sub: _Subscriber, topics: list[str]) -> list[str]:
         async with self._lock:
@@ -57,16 +72,20 @@ class WebSocketHub:
         message.setdefault("topic", topic)
         # Snapshot to avoid holding the lock while iterating queues.
         async with self._lock:
+            self._last_message[topic] = message
             targets = [s for s in self._subscribers if topic in s.topics]
         for sub in targets:
-            try:
+            self._enqueue(sub, message)
+
+    def _enqueue(self, sub: _Subscriber, message: dict[str, Any]) -> None:
+        try:
+            sub.queue.put_nowait(message)
+        except asyncio.QueueFull:
+            # Drop the oldest then enqueue the new one.
+            with contextlib.suppress(asyncio.QueueEmpty):
+                sub.queue.get_nowait()
+            with contextlib.suppress(asyncio.QueueFull):
                 sub.queue.put_nowait(message)
-            except asyncio.QueueFull:
-                # Drop the oldest then enqueue the new one.
-                with contextlib.suppress(asyncio.QueueEmpty):
-                    sub.queue.get_nowait()
-                with contextlib.suppress(asyncio.QueueFull):
-                    sub.queue.put_nowait(message)
 
 
 class WebSocketProgressReporter:

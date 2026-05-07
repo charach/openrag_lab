@@ -14,6 +14,7 @@ from openrag_lab.app.dependencies import get_state
 from openrag_lab.app.state import AppState
 from openrag_lab.domain.models.enums import AccelBackend
 from openrag_lab.domain.models.hardware import SystemProfile
+from openrag_lab.domain.services.model_catalog import get_card
 from openrag_lab.domain.services.preset import Preset, list_presets, recommend
 
 router = APIRouter(prefix="/system", tags=["system"])
@@ -75,6 +76,7 @@ def _vendor_for(backend: AccelBackend) -> str | None:
 
 def _serialize_preset(preset: Preset, profile: SystemProfile) -> dict[str, Any]:
     recommended = recommend(profile)
+    card = get_card(preset.embedder_id)
     return {
         "id": preset.name,
         "name": preset.display_name,
@@ -83,6 +85,7 @@ def _serialize_preset(preset: Preset, profile: SystemProfile) -> dict[str, Any]:
         "config": {
             "embedder_id": preset.embedder_id,
             "embedder_dim": preset.embedder_dim,
+            "embedder_license_id": card.license_id if card else None,
             "chunking": {
                 "strategy": preset.chunking.strategy.value,
                 "chunk_size": preset.chunking.chunk_size,

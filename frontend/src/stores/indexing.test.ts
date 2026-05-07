@@ -38,6 +38,22 @@ describe("indexing store", () => {
     expect(useIndexingStore.getState().phase).toBe("done");
   });
 
+  it("setProgress with type='completed' marks phase done even without ratio", () => {
+    // The hub replays the last published message on subscribe — for a
+    // finished indexing job that's a 'completed' envelope, not a final
+    // progress(ratio=1.0). The store must treat both as terminal so the
+    // wizard's 'Go to Chat' button enables for late subscribers.
+    useIndexingStore.getState().startStarting("ws_a");
+    useIndexingStore.getState().setTask(fakeTask);
+    useIndexingStore.getState().setProgress({
+      topic: "indexing.task_1",
+      type: "completed",
+      experiment_id: "exp_1",
+      summary: { indexed: 1, skipped: 0, failed: 0 },
+    });
+    expect(useIndexingStore.getState().phase).toBe("done");
+  });
+
   it("setProgress before task arrival promotes starting → running", () => {
     useIndexingStore.getState().startStarting("ws_a");
     useIndexingStore.getState().setProgress({ topic: "indexing.task_1", type: "parsing", ratio: 0.05 });
@@ -111,6 +127,28 @@ describe("indexing store", () => {
     });
     store.reset();
     expect(useIndexingStore.getState().files).toEqual({});
+  });
+
+  it("setProgress with type='paused' or 'resumed' toggles paused flag", () => {
+    const store = useIndexingStore.getState();
+    store.startStarting("ws_a");
+    store.setTask(fakeTask);
+    expect(useIndexingStore.getState().paused).toBe(false);
+    store.setProgress({ topic: "indexing.task_1", type: "paused" });
+    expect(useIndexingStore.getState().paused).toBe(true);
+    // The paused message must NOT advance phase or overwrite `progress`.
+    expect(useIndexingStore.getState().phase).toBe("running");
+    store.setProgress({ topic: "indexing.task_1", type: "resumed" });
+    expect(useIndexingStore.getState().paused).toBe(false);
+  });
+
+  it("setPaused exposes a manual override for optimistic UI", () => {
+    const store = useIndexingStore.getState();
+    store.startStarting("ws_a");
+    store.setPaused(true);
+    expect(useIndexingStore.getState().paused).toBe(true);
+    store.setPaused(false);
+    expect(useIndexingStore.getState().paused).toBe(false);
   });
 
   it("markCancelled / markError transitions terminal phases", () => {

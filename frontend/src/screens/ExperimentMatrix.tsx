@@ -8,6 +8,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useWebSocket, type WSMessage } from "../hooks/useWebSocket";
 import { Icon, Modal } from "../components/ui";
+import { DefineMatrixModal } from "../components/modals/DefineMatrixModal";
+import { useBatchSessionStore } from "../stores/batchSession";
 import {
   Bar,
   BarChart,
@@ -233,7 +235,11 @@ export function ExperimentMatrix(): JSX.Element {
         onLaunched={refreshExperiments}
       />
 
-      <MatrixDefinitionCard experiments={sorted} />
+      <MatrixDefinitionCard
+        workspaceId={workspaceId}
+        experiments={sorted}
+        onLaunched={refreshExperiments}
+      />
 
       <div className="card" style={{ marginTop: 24, padding: 0, overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -1044,43 +1050,94 @@ function PerPairSampling({
 }
 
 /**
- * Read-only summary of what a batch run *would* sweep across, derived
- * from existing experiments in the workspace. Backend doesn't expose
- * /experiments/batch yet (P1) — once it does, this card grows the
- * matching Run batch button + BatchSessionBar.
+ * Active matrix card — summarises the existing fingerprint count and
+ * launches a DefineMatrixModal to start an /experiments/batch run.
  */
 function MatrixDefinitionCard({
+  workspaceId,
   experiments,
+  onLaunched,
 }: {
+  workspaceId: string;
   experiments: ExperimentSummary[];
+  onLaunched: () => Promise<void> | void;
 }): JSX.Element | null {
-  if (experiments.length === 0) return null;
-  // We don't have detail.config on the summary, so derive an
-  // approximation from the fingerprint count — each unique fp is one
-  // combo. Detail mode would tell us the actual dim breakdown but
-  // that requires N round-trips; keep it simple.
+  const [modalOpen, setModalOpen] = useState(false);
+  const [goldenSets, setGoldenSets] = useState<
+    Array<{ id: string; name: string; pair_count: number }>
+  >([]);
+  const [error, setError] = useState<string | null>(null);
+  const startBatch = useBatchSessionStore((s) => s.start);
+  const batchActive = useBatchSessionStore((s) => s.active);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    api
+      .listGoldenSets(workspaceId)
+      .then((r) => setGoldenSets(r.items))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [modalOpen, workspaceId]);
+
   const combos = new Set(experiments.map((e) => e.config_fingerprint)).size;
+
+  const submit = async (body: import("../api/client").BatchRequest): Promise<void> => {
+    setError(null);
+    const accepted = await api.startBatch(workspaceId, body);
+    startBatch({
+      batchId: accepted.batch_id,
+      taskId: accepted.task_id,
+      websocketTopic: accepted.websocket_topic,
+      workspaceId,
+      total: body.embedders.length * body.chunkings.length * body.retrievals.length,
+    });
+    setModalOpen(false);
+    await onLaunched();
+  };
+
   return (
-    <section className="card" style={{ padding: 20, marginTop: 32 }}>
-      <div className="row f-between f-center" style={{ marginBottom: 12 }}>
-        <div className="row gap-12 f-center">
-          <span className="t-label">Matrix definition</span>
-          <span className="t-mono t-12" style={{ color: "var(--accent)" }}>
-            {combos} combos · {experiments.length} runs
-          </span>
+    <>
+      <section className="card" style={{ padding: 20, marginTop: 32 }}>
+        <div className="row f-between f-center">
+          <div className="row gap-12 f-center">
+            <span className="t-label">Matrix definition</span>
+            {experiments.length > 0 && (
+              <span className="t-mono t-12" style={{ color: "var(--accent)" }}>
+                {combos} combos · {experiments.length} runs in workspace
+              </span>
+            )}
+          </div>
+          <button
+            className="btn btn-sm btn-primary"
+            data-testid="define-matrix-open"
+            onClick={() => setModalOpen(true)}
+            disabled={batchActive !== null}
+            title={batchActive ? "Another batch is already running." : undefined}
+          >
+            <Icon name="grid" size={11} /> Define matrix
+          </button>
         </div>
-        <span
-          className="t-12 t-meta"
-          title="Batch sweep API (P1) lands once /experiments/batch ships. Today the matrix is a read-only view of what's already in the workspace."
-        >
-          Run batch — coming with /experiments/batch (P1)
-        </span>
-      </div>
-      <div className="t-12 t-meta" style={{ lineHeight: 1.5 }}>
-        지금은 기존 실험들의 fingerprint 분포만 보여줍니다. 백엔드의 batch
-        엔드포인트가 들어오면 차원별 토글과 진행률 바가 추가됩니다.
-      </div>
-    </section>
+        {error && (
+          <div
+            style={{
+              marginTop: 10,
+              padding: "8px 12px",
+              borderLeft: "2px solid var(--error)",
+              color: "var(--error)",
+            }}
+          >
+            <span className="t-12 t-mono">{error}</span>
+          </div>
+        )}
+      </section>
+      {modalOpen && (
+        <DefineMatrixModal
+          workspaceId={workspaceId}
+          goldenSets={goldenSets}
+          onClose={() => setModalOpen(false)}
+          onSubmit={submit}
+        />
+      )}
+    </>
   );
 }
 

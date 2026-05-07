@@ -23,6 +23,7 @@ GoldenSetId = NewType("GoldenSetId", str)
 GoldenPairId = NewType("GoldenPairId", str)
 TaskId = NewType("TaskId", str)
 ChatTurnId = NewType("ChatTurnId", str)
+BatchId = NewType("BatchId", str)
 
 
 _WORKSPACE_PREFIX = "ws"
@@ -33,6 +34,7 @@ _GOLDEN_SET_PREFIX = "gs"
 _GOLDEN_PAIR_PREFIX = "gp"
 _TASK_PREFIX = "task"
 _CHAT_TURN_PREFIX = "turn"
+_BATCH_PREFIX = "batch"
 
 
 def _new(prefix: str, *, hex_chars: int = 12) -> str:
@@ -70,3 +72,7 @@ def new_task_id() -> TaskId:
 
 def new_chat_turn_id() -> ChatTurnId:
     return ChatTurnId(_new(_CHAT_TURN_PREFIX))
+
+
+def new_batch_id() -> BatchId:
+    return BatchId(_new(_BATCH_PREFIX))

@@ -224,6 +224,36 @@ export interface ExperimentDetail extends ExperimentSummary {
   pair_results: unknown[];
 }
 
+export interface ModelCardResponse {
+  id: string;
+  kind: string;
+  display_name: string;
+  license_id: string;
+  license_url: string | null;
+  size_estimate_bytes: number;
+  commercial_use: string;
+  license_body: string;
+  license_accepted: boolean;
+}
+
+export interface BatchChunkingConfig {
+  strategy: string;
+  chunk_size: number;
+  chunk_overlap: number;
+  extra?: Record<string, unknown>;
+}
+
+export interface BatchRequest {
+  embedders: string[];
+  chunkings: BatchChunkingConfig[];
+  retrievals: string[];
+  evaluators: string[];
+  golden_set_id: string;
+  llm_id?: string | null;
+  judge_llm_id?: string | null;
+  top_k?: number;
+}
+
 export const api = {
   systemProfile: (): Promise<SystemProfileResponse> => request("/system/profile"),
   systemPresets: (): Promise<PresetResponse> => request("/system/presets"),
@@ -311,10 +341,16 @@ export const api = {
   ): Promise<IndexAcceptedResponse> =>
     request(`/workspaces/${workspaceId}/index`, { method: "POST", json: payload }),
 
-  taskStatus: (taskId: string): Promise<{ status: string; kind: string }> =>
+  taskStatus: (
+    taskId: string,
+  ): Promise<{ status: string; kind: string; paused?: boolean }> =>
     request(`/tasks/${taskId}`),
   cancelTask: (taskId: string): Promise<{ cancelled: boolean; task_id: string }> =>
     request(`/tasks/${taskId}/cancel`, { method: "POST" }),
+  pauseTask: (taskId: string): Promise<{ paused: boolean; task_id: string }> =>
+    request(`/tasks/${taskId}/pause`, { method: "POST" }),
+  resumeTask: (taskId: string): Promise<{ resumed: boolean; task_id: string }> =>
+    request(`/tasks/${taskId}/resume`, { method: "POST" }),
 
   chat: (
     workspaceId: string,
@@ -446,6 +482,30 @@ export const api = {
       `/workspaces/${workspaceId}/experiments/${experimentId}/evaluate`,
       { method: "POST", json: body },
     ),
+
+  startBatch: (
+    workspaceId: string,
+    body: BatchRequest,
+  ): Promise<{
+    task_id: string;
+    batch_id: string;
+    total_evals: number;
+    websocket_topic: string;
+  }> =>
+    request(`/workspaces/${workspaceId}/experiments/batch`, {
+      method: "POST",
+      json: body,
+    }),
+
+  getModel: (modelId: string): Promise<ModelCardResponse> =>
+    request(`/models/${encodeURIComponent(modelId)}`),
+
+  acceptLicense: (
+    modelId: string,
+  ): Promise<{ accepted: boolean; model_id: string; license_id: string }> =>
+    request(`/models/${encodeURIComponent(modelId)}/accept-license`, {
+      method: "POST",
+    }),
 
   listExternalProviders: (): Promise<{ providers: ExternalProvider[] }> =>
     request("/system/external-providers"),

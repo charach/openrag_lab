@@ -19,6 +19,7 @@ from openrag_lab.app.api.experiments import router as experiments_router
 from openrag_lab.app.api.external_providers import router as external_providers_router
 from openrag_lab.app.api.golden_sets import router as golden_sets_router
 from openrag_lab.app.api.indexing import router as indexing_router
+from openrag_lab.app.api.models import router as models_router
 from openrag_lab.app.api.system import router as system_router
 from openrag_lab.app.api.tasks import router as tasks_router
 from openrag_lab.app.api.workspaces import router as workspaces_router
@@ -112,6 +113,7 @@ def create_app(*, state: AppState | None = None) -> FastAPI:
     )
     install_exception_handlers(app)
     app.include_router(system_router)
+    app.include_router(models_router)
     app.include_router(external_providers_router)
     app.include_router(workspaces_router)
     app.include_router(documents_router)

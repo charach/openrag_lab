@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 from openrag_lab.domain.models.ids import TaskId, new_task_id
-from openrag_lab.domain.services.cancellation import CancellationToken
+from openrag_lab.domain.services.cancellation import CancellationToken, PauseSignal
 
 
 class TaskState(StrEnum):
@@ -43,9 +43,10 @@ class TaskHandle:
     completed_at: datetime | None = None
     error: str | None = None
     token: CancellationToken = field(default_factory=CancellationToken)
+    pause_signal: PauseSignal = field(default_factory=PauseSignal)
 
 
-JobFn = Callable[[CancellationToken], Awaitable[None]]
+JobFn = Callable[[CancellationToken, PauseSignal], Awaitable[None]]
 
 
 class TaskQueue:
@@ -76,6 +77,31 @@ class TaskQueue:
         }:
             return False
         handle.token.cancel()
+        # If the task is currently paused at a stage boundary, releasing
+        # the pause signal lets it observe the cancel and exit promptly.
+        handle.pause_signal.resume()
+        return True
+
+    def pause(self, task_id: TaskId) -> bool:
+        handle = self._handles.get(task_id)
+        if handle is None or handle.state in {
+            TaskState.COMPLETED,
+            TaskState.FAILED,
+            TaskState.CANCELLED,
+        }:
+            return False
+        handle.pause_signal.pause()
+        return True
+
+    def resume(self, task_id: TaskId) -> bool:
+        handle = self._handles.get(task_id)
+        if handle is None or handle.state in {
+            TaskState.COMPLETED,
+            TaskState.FAILED,
+            TaskState.CANCELLED,
+        }:
+            return False
+        handle.pause_signal.resume()
         return True
 
     async def join(self, task_id: TaskId) -> TaskHandle | None:
@@ -94,7 +120,7 @@ class TaskQueue:
             handle.state = TaskState.RUNNING
             handle.started_at = datetime.now(UTC)
             try:
-                await job(handle.token)
+                await job(handle.token, handle.pause_signal)
             except asyncio.CancelledError:
                 handle.state = TaskState.CANCELLED
                 raise

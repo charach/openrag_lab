@@ -39,6 +39,7 @@ export interface FileProgress {
 
 interface IndexingState {
   phase: IndexingPhase;
+  paused: boolean;
   task: IndexAcceptedResponse | null;
   progress: WSMessage | null;
   files: Record<string, FileProgress>;
@@ -48,6 +49,7 @@ interface IndexingState {
   setTask: (task: IndexAcceptedResponse) => void;
   setProgress: (msg: WSMessage) => void;
   setFileProgress: (msg: WSMessage) => void;
+  setPaused: (paused: boolean) => void;
   markDone: () => void;
   markCancelled: () => void;
   markError: (message: string) => void;
@@ -66,6 +68,7 @@ const FILE_STAGES = new Set<FileStage>([
 
 export const useIndexingStore = create<IndexingState>((set) => ({
   phase: "idle",
+  paused: false,
   task: null,
   progress: null,
   files: {},
@@ -74,6 +77,7 @@ export const useIndexingStore = create<IndexingState>((set) => ({
   startStarting: (workspaceId) =>
     set({
       phase: "starting",
+      paused: false,
       task: null,
       progress: null,
       files: {},
@@ -83,11 +87,21 @@ export const useIndexingStore = create<IndexingState>((set) => ({
   setTask: (task) => set({ phase: "running", task }),
   setProgress: (msg) => {
     const ratio = typeof msg.ratio === "number" ? msg.ratio : null;
+    const finished = msg.type === "completed" || (ratio !== null && ratio >= 0.999);
+    if (msg.type === "paused") {
+      set({ paused: true });
+      return;
+    }
+    if (msg.type === "resumed") {
+      set({ paused: false });
+      return;
+    }
     set((s) => ({
       progress: msg,
-      phase: ratio !== null && ratio >= 0.999 ? "done" : s.phase === "starting" ? "running" : s.phase,
+      phase: finished ? "done" : s.phase === "starting" ? "running" : s.phase,
     }));
   },
+  setPaused: (paused) => set({ paused }),
   setFileProgress: (msg) => {
     const fileId = typeof msg.file_id === "string" ? msg.file_id : null;
     const fileName = typeof msg.file_name === "string" ? msg.file_name : null;
@@ -117,6 +131,7 @@ export const useIndexingStore = create<IndexingState>((set) => ({
   reset: () =>
     set({
       phase: "idle",
+      paused: false,
       task: null,
       progress: null,
       files: {},

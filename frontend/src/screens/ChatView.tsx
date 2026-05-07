@@ -9,7 +9,8 @@
  * no PATCH on /turns yet).
  *
  * The header dot pulses gold while a chat round is in flight against an
- * external provider; ``externalCallStore.begin/end`` drives that.
+ * external provider — driven by the ``external_calls`` WS topic that the
+ * Shell subscribes to globally, not by anything this screen toggles.
  */
 
 import {
@@ -34,7 +35,6 @@ import {
 } from "../components/modals/ExportModal";
 import { confirmModal, useModal } from "../components/providers/ModalProvider";
 import { useToast } from "../components/providers/ToastProvider";
-import { useExternalCallStore } from "../stores/externalCall";
 import { useWorkspaceStore } from "../stores/workspace";
 import {
   ExternalCallTag,
@@ -56,11 +56,10 @@ export function normalizeScore(raw: number): number {
 }
 
 /**
- * Detect whether a model id refers to an external provider. The four
- * we ship today live in adapters/llms/{anthropic,openai,gemini,
- * openrouter}.py — recognising them by a small whitelist keeps the UI
- * decision local and avoids a round-trip just to know whether to dim
- * the dot. The display name is what we render in the ExternalCallTag.
+ * Decode the experiment's configured llm_id to a provider+model pair for
+ * the post-hoc display badge ("external · Anthropic"). The live header
+ * dot is driven by the WS ``external_calls`` topic — this function never
+ * touches the dot, it just labels which provider an experiment uses.
  */
 function detectExternal(
   llmId: string | null | undefined,
@@ -88,8 +87,6 @@ export function ChatView(): JSX.Element {
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const modal = useModal();
   const toast = useToast();
-  const externalBegin = useExternalCallStore((s) => s.begin);
-  const externalEnd = useExternalCallStore((s) => s.end);
   const [experiments, setExperiments] = useState<ExperimentSummary[]>([]);
   const [activeDetail, setActiveDetail] = useState<ExperimentDetail | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -150,9 +147,6 @@ export function ChatView(): JSX.Element {
     setLoading(true);
     setError(null);
     setActiveChunk(null);
-    if (externalProvider) {
-      externalBegin(externalProvider.provider, "generation");
-    }
     try {
       const res = await api.chat(workspaceId, { experiment_id: selected, question: q });
       const turn: TurnView = {
@@ -177,7 +171,6 @@ export function ChatView(): JSX.Element {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
-      externalEnd();
     }
   };
 

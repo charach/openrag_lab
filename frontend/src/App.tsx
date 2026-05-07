@@ -4,6 +4,7 @@
  */
 
 import { Route, Routes } from "react-router-dom";
+import { BatchSessionBar } from "./components/BatchSessionBar";
 import { Shell } from "./components/Shell";
 import { ModalProvider } from "./components/providers/ModalProvider";
 import { ToastProvider } from "./components/providers/ToastProvider";
@@ -30,6 +31,7 @@ export function App(): JSX.Element {
             <Route path="/providers" element={<ExternalProviders />} />
           </Routes>
         </Shell>
+        <BatchSessionBar />
       </ToastProvider>
     </ModalProvider>
   );

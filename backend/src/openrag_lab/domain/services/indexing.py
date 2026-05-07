@@ -35,7 +35,7 @@ from openrag_lab.domain.ports.chunker import Chunker
 from openrag_lab.domain.ports.embedder import Embedder
 from openrag_lab.domain.ports.parser import DocumentParser
 from openrag_lab.domain.ports.vector_store import VectorItem, VectorStore
-from openrag_lab.domain.services.cancellation import CancellationToken
+from openrag_lab.domain.services.cancellation import CancellationToken, PauseSignal
 from openrag_lab.domain.services.progress import (
     NullProgressReporter,
     ProgressReporter,
@@ -121,10 +121,12 @@ class IndexingService:
         config: ExperimentConfig,
         chunking: ChunkingConfig,
         token: CancellationToken | None = None,
+        pause_signal: PauseSignal | None = None,
         progress: ProgressReporter | None = None,
         topic: str = "",
     ) -> IndexingReport:
         token = token or CancellationToken()
+        pause_signal = pause_signal or PauseSignal()
         progress = progress or NullProgressReporter()
         chunker = self._pick_chunker(chunking)
 
@@ -137,6 +139,10 @@ class IndexingService:
         report = IndexingReport(workspace_id=workspace_id, config_fingerprint=fp)
         total = len(documents)
         for i, doc in enumerate(documents):
+            # Honour a pause request at the per-document boundary. Cancel
+            # is checked AFTER waking so a cancel issued during pause
+            # exits the run instead of starting a new document.
+            await pause_signal.wait_if_paused()
             try:
                 token.raise_if_cancelled(stage="document")
             except OpenRagError:

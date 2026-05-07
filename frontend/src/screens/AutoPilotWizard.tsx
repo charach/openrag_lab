@@ -29,6 +29,7 @@ import {
 } from "../api/client";
 import { DropZone } from "../components/DropZone";
 import { DimMismatchModal } from "../components/modals/DimMismatchModal";
+import { LicenseModal } from "../components/modals/LicenseModal";
 import { confirmModal, useModal } from "../components/providers/ModalProvider";
 import { useToast } from "../components/providers/ToastProvider";
 import { useWebSocket } from "../hooks/useWebSocket";
@@ -72,7 +73,6 @@ export function AutoPilotWizard(): JSX.Element {
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [paused, setPaused] = useState(false);
   const [failedDocs, setFailedDocs] = useState<DocumentItem[]>([]);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
@@ -203,10 +203,41 @@ export function AutoPilotWizard(): JSX.Element {
     setChosen(nextId);
   };
 
+  const runIndex = async (preset: PresetEntry): Promise<void> => {
+    let workspaceId: string;
+    if (workspaceMode === "existing") {
+      if (!activeWorkspaceId) {
+        setError("선택된 워크스페이스가 없습니다. 헤더에서 선택하거나 새로 만드세요.");
+        return;
+      }
+      workspaceId = activeWorkspaceId;
+    } else {
+      const trimmed = workspaceName.trim();
+      if (trimmed.length === 0) {
+        setError("워크스페이스 이름을 입력하세요.");
+        return;
+      }
+      const ws = await api.createWorkspace(trimmed, preset.id);
+      setActiveWorkspace(ws.id);
+      workspaceId = ws.id;
+    }
+    indexing.startStarting(workspaceId);
+    if (files.length > 0) await api.uploadDocuments(workspaceId, files);
+    const accepted = await api.startIndex(workspaceId, {
+      config: {
+        embedder_id: preset.config.embedder_id,
+        chunking: preset.config.chunking,
+        retrieval_strategy: preset.config.retrieval_strategy,
+        top_k: preset.config.top_k,
+        llm_id: preset.config.llm_id,
+      },
+    });
+    indexing.setTask(accepted);
+  };
+
   const launch = async (): Promise<void> => {
     setError(null);
     setSubmitting(true);
-    setPaused(false);
     setFailedDocs([]);
     const preset = presets.find((p) => p.id === chosen);
     if (!preset) {
@@ -223,37 +254,54 @@ export function AutoPilotWizard(): JSX.Element {
       return;
     }
     try {
-      let workspaceId: string;
-      if (workspaceMode === "existing") {
-        if (!activeWorkspaceId) {
-          setError("선택된 워크스페이스가 없습니다. 헤더에서 선택하거나 새로 만드세요.");
-          setSubmitting(false);
-          return;
-        }
-        workspaceId = activeWorkspaceId;
-      } else {
-        const trimmed = workspaceName.trim();
-        if (trimmed.length === 0) {
-          setError("워크스페이스 이름을 입력하세요.");
-          setSubmitting(false);
-          return;
-        }
-        const ws = await api.createWorkspace(trimmed, preset.id);
-        setActiveWorkspace(ws.id);
-        workspaceId = ws.id;
+      // License gate: if the preset's embedder is in the catalog and the
+      // user hasn't accepted its license yet, open LicenseModal first.
+      // The catalog only ships our three default presets; other embedders
+      // (test-mode FakeEmbedder, future user-supplied) skip the gate
+      // because /models/{id} 404s and we treat 404 as "no metadata,
+      // proceed."
+      let card;
+      try {
+        card = await api.getModel(preset.config.embedder_id);
+      } catch {
+        card = null;
       }
-      indexing.startStarting(workspaceId);
-      if (files.length > 0) await api.uploadDocuments(workspaceId, files);
-      const accepted = await api.startIndex(workspaceId, {
-        config: {
-          embedder_id: preset.config.embedder_id,
-          chunking: preset.config.chunking,
-          retrieval_strategy: preset.config.retrieval_strategy,
-          top_k: preset.config.top_k,
-          llm_id: preset.config.llm_id,
-        },
-      });
-      indexing.setTask(accepted);
+      if (card && !card.license_accepted) {
+        setSubmitting(false);
+        modal.open({
+          title: "Model license",
+          eyebrow: "First-time download",
+          width: 560,
+          render: ({ close }) => (
+            <LicenseModal
+              model={{
+                name: card!.display_name,
+                licenseId: card!.license_id,
+                size: formatBytes(card!.size_estimate_bytes),
+                commercial: card!.commercial_use,
+                licenseUrl: card!.license_url ?? undefined,
+              }}
+              body={card!.license_body}
+              onAccept={async () => {
+                try {
+                  await api.acceptLicense(card!.id);
+                  setSubmitting(true);
+                  await runIndex(preset);
+                } catch (e) {
+                  const msg = e instanceof Error ? e.message : String(e);
+                  setError(msg);
+                  indexing.markError(msg);
+                } finally {
+                  setSubmitting(false);
+                }
+              }}
+              close={close}
+            />
+          ),
+        });
+        return;
+      }
+      await runIndex(preset);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
@@ -424,7 +472,7 @@ export function AutoPilotWizard(): JSX.Element {
                       position: "absolute",
                       inset: 0,
                       width: `${(ratio ?? 0) * 100}%`,
-                      background: "var(--accent)",
+                      background: indexing.paused ? "var(--text-2)" : "var(--accent)",
                       transition: "width 220ms linear",
                     }}
                   ></div>
@@ -476,7 +524,7 @@ export function AutoPilotWizard(): JSX.Element {
                     cancelled
                   </span>
                 )}
-                {paused && (
+                {indexing.paused && (
                   <span className="chip" style={{ color: "var(--accent)" }}>
                     paused
                   </span>
@@ -484,19 +532,32 @@ export function AutoPilotWizard(): JSX.Element {
                 <div style={{ flex: 1 }}></div>
                 <button
                   className="btn btn-sm"
-                  disabled={isStarting || cancelled || completed}
-                  onClick={() => {
-                    setPaused((p) => !p);
-                    toast.push({
-                      eyebrow: paused ? "Resumed" : "Paused",
-                      message: paused
-                        ? "Indexing continues — checkpoints picked up where they left off."
-                        : "True pause is on the roadmap. Cancel + restart preserves checkpoints today.",
-                    });
+                  data-testid="wizard-pause"
+                  disabled={isStarting || cancelled || completed || !indexing.task}
+                  onClick={async () => {
+                    if (!indexing.task) return;
+                    const taskId = indexing.task.task_id;
+                    const wasPaused = indexing.paused;
+                    // Optimistically toggle so the button reflects intent
+                    // immediately; the WS event would also flip it.
+                    indexing.setPaused(!wasPaused);
+                    try {
+                      if (wasPaused) await api.resumeTask(taskId);
+                      else await api.pauseTask(taskId);
+                      toast.push({
+                        eyebrow: wasPaused ? "Resumed" : "Paused",
+                        message: wasPaused
+                          ? "Indexing continues from the next document boundary."
+                          : "Indexing will pause at the next document boundary.",
+                      });
+                    } catch (e) {
+                      indexing.setPaused(wasPaused);
+                      setError(e instanceof Error ? e.message : String(e));
+                    }
                   }}
                 >
-                  <Icon name={paused ? "play" : "pause"} size={11} />
-                  {paused ? "Resume" : "Pause"}
+                  <Icon name={indexing.paused ? "play" : "pause"} size={11} />
+                  {indexing.paused ? "Resume" : "Pause"}
                 </button>
                 <button
                   className="btn btn-sm"

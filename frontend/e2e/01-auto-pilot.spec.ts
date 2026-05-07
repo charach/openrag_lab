@@ -12,7 +12,7 @@ import { test, expect } from "@playwright/test";
 
 test.setTimeout(120_000);
 
-test("Auto-Pilot: upload, index, chat", async ({ page, request }) => {
+test("Auto-Pilot: upload, index, chat", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Drag your folder")).toBeVisible();
 
@@ -37,24 +37,28 @@ test("Auto-Pilot: upload, index, chat", async ({ page, request }) => {
 
   await page.getByTestId("wizard-start").click();
 
+  // First indexing run for a fresh ``OPENRAG_HOME`` triggers the license
+  // gate (the recommended preset's embedder is in the model catalog and
+  // hasn't been accepted yet). Tick the checkbox + confirm to proceed.
+  const licenseCheckbox = page.getByTestId("license-accept-checkbox");
+  try {
+    await licenseCheckbox.waitFor({ state: "visible", timeout: 5_000 });
+    await licenseCheckbox.check();
+    await page.getByTestId("license-accept-confirm").click();
+  } catch {
+    // No license gate — model already accepted on this OPENRAG_HOME, or
+    // a future build moved the gate elsewhere. Either is fine.
+  }
+
   // Indexing card surfaces as soon as the task is accepted.
   await expect(page.getByText(/task_id/)).toBeVisible({ timeout: 30_000 });
 
-  // The current WS reporter has a startup race: a fast-finishing job can
-  // emit its final progress before the wizard subscribes, so the "Go to
-  // Chat" button stays disabled even after the task has actually
-  // completed. Until that's fixed (TODO_NEXT.md §C), poll the task API
-  // directly and navigate by URL.
-  const taskId = await page
-    .getByText(/task_id/)
-    .textContent()
-    .then((t) => (t ?? "").replace("task_id", "").trim());
-  await expect.poll(
-    async () => (await (await request.get(`/api/tasks/${taskId}`)).json()).status,
-    { timeout: 60_000 },
-  ).toBe("completed");
-
-  await page.goto("/chat");
+  // Hub replays the last published message on subscribe, so the wizard
+  // sees the final progress(ratio=1.0) even when indexing finishes before
+  // the WS subscribe ack lands. "Go to Chat" enables on completion.
+  const goChat = page.getByTestId("wizard-go-chat");
+  await expect(goChat).toBeEnabled({ timeout: 60_000 });
+  await goChat.click();
   await expect(page.getByText("Ask the corpus.")).toBeVisible();
 
   // The experiment rail populates after the chat screen reads /experiments.

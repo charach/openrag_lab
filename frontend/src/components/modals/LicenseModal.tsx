@@ -61,6 +61,7 @@ export function LicenseModal({
       <label className="row gap-8 f-center t-13">
         <input
           type="checkbox"
+          data-testid="license-accept-checkbox"
           checked={accepted}
           onChange={(e) => setAccepted(e.target.checked)}
           style={{ accentColor: "var(--accent)" }}
@@ -90,6 +91,7 @@ export function LicenseModal({
           </button>
           <button
             className="btn btn-sm btn-primary"
+            data-testid="license-accept-confirm"
             disabled={!accepted}
             onClick={async () => {
               await onAccept?.();
