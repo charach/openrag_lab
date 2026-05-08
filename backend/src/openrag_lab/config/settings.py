@@ -69,7 +69,7 @@ class ExternalSettings(BaseModel):
 
     allow_llm_api: bool = True
     allowed_providers: tuple[str, ...] = Field(
-        default=("openai", "anthropic", "gemini", "openrouter", "ollama")
+        default=("openai", "anthropic", "gemini", "openrouter", "ollama", "litellm")
     )
 
 

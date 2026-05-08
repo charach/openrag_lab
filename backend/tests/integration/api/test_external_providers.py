@@ -41,7 +41,7 @@ def test_list_providers_returns_all_four_unregistered_initially(app_state: AppSt
     assert resp.status_code == 200
     body = resp.json()
     ids = {p["id"] for p in body["providers"]}
-    assert ids == {"openai", "anthropic", "gemini", "openrouter", "ollama"}
+    assert ids == {"openai", "anthropic", "gemini", "openrouter", "ollama", "litellm"}
     for p in body["providers"]:
         assert p["key_registered"] is False
         assert "key_suffix" not in p
@@ -50,6 +50,7 @@ def test_list_providers_returns_all_four_unregistered_initially(app_state: AppSt
     # API-key based.
     by_id = {p["id"]: p for p in body["providers"]}
     assert by_id["ollama"]["url_based"] is True
+    assert by_id["litellm"]["url_based"] is True
     assert by_id["openai"]["url_based"] is False
 
 
@@ -162,6 +163,55 @@ def test_register_ollama_with_url_pings_tags_endpoint(app_state: AppState) -> No
         Keystore(state.layout.api_keys_yaml).get(ExternalProvider.OLLAMA)
         == "http://localhost:11434"
     )
+
+
+def test_register_litellm_with_url_only(app_state: AppState) -> None:
+    """LiteLLM accepts a bare URL (no key) and pings ``/v1/models`` without auth."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"data": []})
+
+    state = _state_with_http(app_state, handler)
+    with TestClient(create_app(state=state)) as client:
+        resp = client.post(
+            "/system/external-providers/litellm/key",
+            json={"key": "http://localhost:4000", "validate_now": True},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["validation_status"] == "ok"
+    assert seen["url"] == "http://localhost:4000/v1/models"
+    assert seen["auth"] is None
+    assert (
+        Keystore(state.layout.api_keys_yaml).get(ExternalProvider.LITELLM)
+        == "http://localhost:4000"
+    )
+
+
+def test_register_litellm_with_url_and_bearer(app_state: AppState) -> None:
+    """When the slot is ``url|key``, validation sends the bearer header."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"data": []})
+
+    state = _state_with_http(app_state, handler)
+    with TestClient(create_app(state=state)) as client:
+        resp = client.post(
+            "/system/external-providers/litellm/key",
+            json={
+                "key": "http://litellm.internal:4000|sk-master-1234",
+                "validate_now": True,
+            },
+        )
+    assert resp.status_code == 200
+    assert resp.json()["validation_status"] == "ok"
+    assert seen["url"] == "http://litellm.internal:4000/v1/models"
+    assert seen["auth"] == "Bearer sk-master-1234"
 
 
 def test_register_key_unknown_provider_returns_422(app_state: AppState) -> None:

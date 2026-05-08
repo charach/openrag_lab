@@ -24,6 +24,10 @@ class ExternalProvider(StrEnum):
     # keystore slot stores the base URL instead of an API key — no auth
     # is sent on requests.
     OLLAMA = "ollama"
+    # LiteLLM proxy (or any OpenAI-compatible gateway behind a bearer
+    # token). The keystore slot stores ``<base_url>|<api_key>``; the
+    # ``|`` and key are optional, so a key-less proxy works too.
+    LITELLM = "litellm"
 
 
 @dataclass(frozen=True)

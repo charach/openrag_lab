@@ -27,6 +27,8 @@ import {
   type ChatTurnRecord,
   type ExperimentDetail,
   type ExperimentSummary,
+  type IndexAcceptedResponse,
+  type PresetResponse,
 } from "../api/client";
 import {
   ExportModal,
@@ -35,13 +37,17 @@ import {
 } from "../components/modals/ExportModal";
 import { confirmModal, useModal } from "../components/providers/ModalProvider";
 import { useToast } from "../components/providers/ToastProvider";
+import { useIndexingStore } from "../stores/indexing";
 import { useWorkspaceStore } from "../stores/workspace";
 import {
   ExternalCallTag,
   Icon,
+  Modal,
   PageHeader,
   RetrievalOnlyBadge,
 } from "../components/ui";
+
+type PresetEntry = PresetResponse["presets"][number];
 
 /**
  * Cosine similarity is reported in [-1, 1]; negative values mean "essentially
@@ -100,7 +106,9 @@ export function ChatView(): JSX.Element {
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [deleteSelection, setDeleteSelection] = useState<Set<string>>(() => new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [newExpOpen, setNewExpOpen] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const indexing = useIndexingStore();
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -374,8 +382,11 @@ export function ChatView(): JSX.Element {
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    // Plain Enter sends; Shift+Enter inserts a newline (chat conventions).
+    // Cmd/Ctrl+Enter is kept as an alias for users with muscle memory.
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
+      if (loading) return;
       void ask();
     }
   };
@@ -432,6 +443,7 @@ export function ChatView(): JSX.Element {
           onToggleDelete={toggleDeleteSelection}
           onBulkDelete={askBulkDeleteExperiments}
           bulkDeleting={bulkDeleting}
+          onNewExperiment={() => setNewExpOpen(true)}
         />
 
         <div className="col gap-16">
@@ -481,7 +493,9 @@ export function ChatView(): JSX.Element {
             </div>
           ) : (
             <div className="col gap-12">
-              {history.map((t) => (
+              {/* Newest turn first — chat-style reverse chronology so the
+                  user sees their latest question without scrolling. */}
+              {[...history].reverse().map((t) => (
                 <TurnCard
                   key={t.id}
                   turn={t}
@@ -511,18 +525,22 @@ export function ChatView(): JSX.Element {
               data-testid="chat-composer"
               rows={3}
               placeholder={
-                isRetrievalOnlyExp
-                  ? "Search retrieved chunks…"
-                  : "Ask about your documents…"
+                loading
+                  ? "응답을 기다리는 중입니다…"
+                  : isRetrievalOnlyExp
+                    ? "Search retrieved chunks…"
+                    : "Ask about your documents…"
               }
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               onKeyDown={onKey}
+              disabled={loading}
+              style={loading ? { opacity: 0.55, cursor: "wait" } : undefined}
             />
             <div className="row f-between f-center">
               <span className="t-12 t-meta row gap-12 f-center">
                 <span>
-                  <kbd>⌘</kbd> <kbd>⏎</kbd> to send
+                  <kbd>⏎</kbd> to send · <kbd>⇧</kbd>+<kbd>⏎</kbd> for newline
                 </span>
                 <span>·</span>
                 <span>{history.length} turns</span>
@@ -546,6 +564,21 @@ export function ChatView(): JSX.Element {
           setActiveChunk={setActiveChunk}
         />
       </div>
+      {newExpOpen && workspaceId && (
+        <NewExperimentModal
+          workspaceId={workspaceId}
+          onClose={() => setNewExpOpen(false)}
+          onLaunched={(accepted) => {
+            indexing.startStarting(workspaceId);
+            indexing.setTask(accepted);
+            setNewExpOpen(false);
+            toast.push({
+              eyebrow: "Started",
+              message: "새 실험 — 인덱싱이 진행 중입니다. Auto-Pilot에서 추적하세요.",
+            });
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -559,6 +592,7 @@ function ExperimentRail({
   onToggleDelete,
   onBulkDelete,
   bulkDeleting,
+  onNewExperiment,
 }: {
   experiments: ExperimentSummary[];
   selected: string | null;
@@ -568,6 +602,7 @@ function ExperimentRail({
   onToggleDelete: (id: string) => void;
   onBulkDelete: () => void;
   bulkDeleting: boolean;
+  onNewExperiment: () => void;
 }): JSX.Element {
   const selectedForDelete = deleteSelection.size;
   return (
@@ -577,19 +612,31 @@ function ExperimentRail({
         style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}
       >
         <span className="t-label">Experiments</span>
-        {selectedForDelete > 0 && (
-          <button
-            type="button"
-            className="btn btn-sm"
-            disabled={bulkDeleting}
-            onClick={onBulkDelete}
-            aria-label={`delete ${selectedForDelete} selected experiments`}
-            style={{ borderColor: "var(--error)", color: "var(--error)" }}
-          >
-            <Icon name="trash" size={11} />
-            {bulkDeleting ? "Deleting…" : `Delete (${selectedForDelete})`}
-          </button>
-        )}
+        <div className="row gap-6">
+          {selectedForDelete > 0 ? (
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={bulkDeleting}
+              onClick={onBulkDelete}
+              aria-label={`delete ${selectedForDelete} selected experiments`}
+              style={{ borderColor: "var(--error)", color: "var(--error)" }}
+            >
+              <Icon name="trash" size={11} />
+              {bulkDeleting ? "Deleting…" : `Delete (${selectedForDelete})`}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={onNewExperiment}
+              aria-label="create new experiment"
+              title="새 실험 만들기"
+            >
+              + New
+            </button>
+          )}
+        </div>
       </div>
       {experiments.length === 0 ? (
         <p className="t-12 t-meta" style={{ padding: 16 }}>
@@ -1121,5 +1168,144 @@ function buildThreadPreview(
     },
     null,
     2,
+  );
+}
+
+/**
+ * Lightweight "new experiment" form usable from Chat. Picks a system
+ * preset and re-indexes the workspace with ``force_reindex`` so a fresh
+ * experiment row appears. Power users still have the full param panel
+ * on /experiments — this is the one-click path.
+ */
+function NewExperimentModal({
+  workspaceId,
+  onClose,
+  onLaunched,
+}: {
+  workspaceId: string;
+  onClose: () => void;
+  onLaunched: (accepted: IndexAcceptedResponse) => void;
+}): JSX.Element {
+  const [presets, setPresets] = useState<PresetEntry[]>([]);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .systemPresets()
+      .then((r) => {
+        setPresets(r.presets);
+        const recommended = r.presets.find((p) => p.recommended) ?? r.presets[0];
+        if (recommended) setChosen(recommended.id);
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }, []);
+
+  const submit = async (): Promise<void> => {
+    const preset = presets.find((p) => p.id === chosen);
+    if (!preset) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const accepted = await api.startIndex(workspaceId, {
+        config: {
+          embedder_id: preset.config.embedder_id,
+          chunking: {
+            strategy: preset.config.chunking.strategy,
+            chunk_size: preset.config.chunking.chunk_size,
+            chunk_overlap: preset.config.chunking.chunk_overlap,
+          },
+          retrieval_strategy: preset.config.retrieval_strategy,
+          top_k: preset.config.top_k,
+          llm_id: preset.config.llm_id,
+        },
+        force_reindex: true,
+      });
+      onLaunched(accepted);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="New experiment"
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+      footer={
+        <>
+          <button className="btn" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={submit}
+            disabled={busy || !chosen}
+          >
+            {busy ? "Starting…" : "Start indexing"}
+          </button>
+        </>
+      }
+    >
+      <p className="t-12 t-meta" style={{ marginTop: 0, marginBottom: 12 }}>
+        프리셋을 선택해 새 실험을 만듭니다. 인덱싱이 끝나면 Chat 좌측 레일에
+        실험이 나타납니다. 세부 파라미터를 직접 조정하려면{" "}
+        <Link to="/experiments" style={{ color: "var(--accent)" }}>
+          Experiments 페이지
+        </Link>
+        를 사용하세요.
+      </p>
+      <div className="col gap-6">
+        {presets.length === 0 ? (
+          <p className="t-12 t-meta">Loading presets…</p>
+        ) : (
+          presets.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setChosen(p.id)}
+              disabled={!p.available}
+              style={{
+                textAlign: "left",
+                padding: 12,
+                background: chosen === p.id ? "var(--bg-2)" : "var(--bg-0)",
+                border:
+                  "1px solid " +
+                  (chosen === p.id ? "var(--accent)" : "var(--border-strong)"),
+                color: "var(--text-0)",
+                cursor: p.available ? "pointer" : "not-allowed",
+                fontFamily: "inherit",
+                opacity: p.available ? 1 : 0.45,
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+              }}
+            >
+              <div className="row f-between f-center">
+                <span className="t-13">{p.name}</span>
+                {p.recommended && (
+                  <span className="chip chip-gold" style={{ fontSize: 9 }}>
+                    Recommended
+                  </span>
+                )}
+              </div>
+              <span className="t-12 t-meta t-mono">
+                {p.config.embedder_id} · {p.config.chunking.strategy}{" "}
+                {p.config.chunking.chunk_size}/{p.config.chunking.chunk_overlap}
+              </span>
+            </button>
+          ))
+        )}
+      </div>
+      {err && (
+        <p className="t-12" style={{ color: "var(--error)", marginTop: 12 }}>
+          {err}
+        </p>
+      )}
+    </Modal>
   );
 }

@@ -45,6 +45,7 @@ _PROVIDER_DISPLAY: dict[ExternalProvider, str] = {
     ExternalProvider.GEMINI: "Google Gemini",
     ExternalProvider.OPENROUTER: "OpenRouter",
     ExternalProvider.OLLAMA: "Ollama (HTTP)",
+    ExternalProvider.LITELLM: "LiteLLM Proxy",
 }
 
 _SUPPORTED_MODELS: dict[ExternalProvider, list[str]] = {
@@ -60,11 +61,21 @@ _SUPPORTED_MODELS: dict[ExternalProvider, list[str]] = {
         "anthropic/claude-3.5-sonnet",
     ],
     ExternalProvider.OLLAMA: ["llama3", "mistral", "qwen2.5", "phi3"],
+    ExternalProvider.LITELLM: [
+        "gpt-4o-mini",
+        "claude-3-5-sonnet",
+        "ollama/llama3",
+    ],
 }
 
 # Providers that store a base URL in place of an API key. The UI shows
-# a URL input and skips the key-validation prompt.
-_URL_BASED_PROVIDERS: set[ExternalProvider] = {ExternalProvider.OLLAMA}
+# a URL input and skips the key-validation prompt. LiteLLM is included
+# even though it ALSO accepts an optional bearer key — the UI offers a
+# second field for that on top of the URL.
+_URL_BASED_PROVIDERS: set[ExternalProvider] = {
+    ExternalProvider.OLLAMA,
+    ExternalProvider.LITELLM,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -130,8 +141,7 @@ async def _validate_key(
                 "https://openrouter.ai/api/v1/models",
                 headers={"authorization": f"Bearer {key}"},
             )
-        else:
-            assert provider is ExternalProvider.OLLAMA
+        elif provider is ExternalProvider.OLLAMA:
             from openrag_lab.adapters.llms.ollama import (
                 DEFAULT_BASE_URL,
                 _normalize_base,
@@ -139,6 +149,18 @@ async def _validate_key(
 
             base = _normalize_base(key) if key else DEFAULT_BASE_URL
             resp = await client.get(f"{base}/api/tags")
+        else:
+            assert provider is ExternalProvider.LITELLM
+            from openrag_lab.adapters.llms.litellm import (
+                DEFAULT_BASE_URL as LITELLM_DEFAULT,
+                parse_credentials,
+            )
+
+            base, bearer = parse_credentials(key) if key else (LITELLM_DEFAULT, "")
+            headers: dict[str, str] = {}
+            if bearer:
+                headers["authorization"] = f"Bearer {bearer}"
+            resp = await client.get(f"{base}/v1/models", headers=headers)
     except httpx.TimeoutException:
         return "network_error"
     except httpx.HTTPError:

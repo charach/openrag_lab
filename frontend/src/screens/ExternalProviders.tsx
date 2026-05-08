@@ -17,6 +17,9 @@ export function ExternalProviders(): JSX.Element {
   const [registering, setRegistering] = useState<ExternalProvider | null>(null);
   const [deleting, setDeleting] = useState<ExternalProvider | null>(null);
   const [keyDraft, setKeyDraft] = useState("");
+  // Second field used only by providers that combine a base URL with an
+  // optional bearer key (LiteLLM today).
+  const [bearerDraft, setBearerDraft] = useState("");
   const [validateNow, setValidateNow] = useState(true);
   const [busy, setBusy] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
@@ -40,9 +43,17 @@ export function ExternalProviders(): JSX.Element {
 
   const openRegister = (p: ExternalProvider): void => {
     setRegistering(p);
-    // For URL-based providers (Ollama et al.) prefill the local default
-    // so the user only has to confirm or tweak the host.
-    setKeyDraft(p.url_based ? "http://localhost:11434" : "");
+    // For URL-based providers prefill the local default so the user only
+    // has to confirm or tweak the host. Each provider has its own
+    // conventional port (Ollama 11434, LiteLLM 4000).
+    setKeyDraft(
+      p.id === "ollama"
+        ? "http://localhost:11434"
+        : p.id === "litellm"
+          ? "http://localhost:4000"
+          : "",
+    );
+    setBearerDraft("");
     setValidateNow(true);
     setRegisterError(null);
   };
@@ -51,6 +62,7 @@ export function ExternalProviders(): JSX.Element {
     if (busy) return;
     setRegistering(null);
     setKeyDraft("");
+    setBearerDraft("");
     setRegisterError(null);
   };
 
@@ -59,12 +71,19 @@ export function ExternalProviders(): JSX.Element {
     setBusy(true);
     setRegisterError(null);
     try {
+      // LiteLLM stores ``<url>|<key>`` in the same keystore slot, so we
+      // pack both fields here. Empty bearer collapses back to plain URL.
+      const url = keyDraft.trim();
+      const bearer = bearerDraft.trim();
+      const payloadKey =
+        registering.id === "litellm" && bearer.length > 0 ? `${url}|${bearer}` : url;
       await api.registerExternalProviderKey(registering.id, {
-        key: keyDraft.trim(),
+        key: payloadKey,
         validate_now: validateNow,
       });
       setRegistering(null);
       setKeyDraft("");
+      setBearerDraft("");
       await refresh();
     } catch (e) {
       if (e instanceof ApiException) {
@@ -227,9 +246,30 @@ export function ExternalProviders(): JSX.Element {
           {registering.url_based && (
             <p className="t-12 t-meta" style={{ marginTop: 8 }}>
               OpenAI-compatible <code>/v1/chat/completions</code> 엔드포인트.
-              Ollama·vLLM·LM Studio 같은 로컬 서버에 사용하세요. 인증 헤더는
-              전송되지 않습니다.
+              {registering.id === "litellm"
+                ? " LiteLLM Proxy 같은 게이트웨이에 사용하세요. 필요하다면 아래에 master/virtual key를 입력하세요."
+                : " Ollama·vLLM·LM Studio 같은 로컬 서버에 사용하세요. 인증 헤더는 전송되지 않습니다."}
             </p>
+          )}
+          {registering.id === "litellm" && (
+            <>
+              <label
+                className="t-label"
+                style={{ display: "block", marginTop: 14, marginBottom: 8 }}
+              >
+                API key (optional)
+              </label>
+              <input
+                className="input"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={bearerDraft}
+                onChange={(e) => setBearerDraft(e.target.value)}
+                placeholder="sk-... (LiteLLM master / virtual key)"
+                aria-label="litellm bearer key"
+              />
+            </>
           )}
           <label
             className="row gap-8 f-center t-12"

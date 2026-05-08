@@ -125,6 +125,20 @@ def _build_external_llm(
         # Empty string falls back to the local default.
         base_url = api_key if api_key else DEFAULT_BASE_URL
         return OllamaLLM(model=model, base_url=base_url, client=client)
+    if ref_provider is ExternalProvider.LITELLM:
+        from openrag_lab.adapters.llms.litellm import (
+            DEFAULT_BASE_URL as LITELLM_DEFAULT,
+            LiteLLMLLM,
+            parse_credentials,
+        )
+
+        # ``api_key`` here is the raw keystore slot — ``<url>|<key>``.
+        # Empty stored value → adapter default (localhost:4000), no auth.
+        if api_key:
+            base_url, key = parse_credentials(api_key)
+        else:
+            base_url, key = LITELLM_DEFAULT, ""
+        return LiteLLMLLM(model=model, base_url=base_url, api_key=key, client=client)
     raise ConfigurationError(
         f"지원하지 않는 외부 제공자입니다: {ref_provider!r}.",
         code="EXTERNAL_PROVIDER_UNKNOWN",
@@ -167,10 +181,11 @@ def make_external_llm_factory(
                     "allowed": list(external_settings.allowed_providers),
                 },
             )
-        # Ollama doesn't need an API key — the keystore slot stores an
-        # optional base URL override. Empty string falls back to the
-        # adapter default (http://localhost:11434).
-        if ref.provider is ExternalProvider.OLLAMA:
+        # The local HTTP providers (Ollama, LiteLLM) treat the keystore
+        # slot as an optional base URL (and, for LiteLLM, an optional
+        # bearer key after a "|"). Empty values fall back to adapter
+        # defaults — no key is required to instantiate.
+        if ref.provider in {ExternalProvider.OLLAMA, ExternalProvider.LITELLM}:
             api_key = keystore.get(ref.provider) or ""
         else:
             api_key = keystore.require(ref.provider)

@@ -9,6 +9,10 @@ import pytest
 
 from openrag_lab.adapters.llms.anthropic import AnthropicLLM
 from openrag_lab.adapters.llms.gemini import GeminiLLM
+from openrag_lab.adapters.llms.litellm import (
+    DEFAULT_BASE_URL as LITELLM_DEFAULT,
+    LiteLLMLLM,
+)
 from openrag_lab.adapters.llms.null import NullLLM
 from openrag_lab.adapters.llms.ollama import DEFAULT_BASE_URL, OllamaLLM
 from openrag_lab.adapters.llms.openai import OpenAILLM
@@ -140,6 +144,45 @@ def test_ollama_uses_registered_url_override(tmp_path: Path) -> None:
     llm = factory("external:ollama:mistral")
     assert isinstance(llm, OllamaLLM)
     assert llm._base == "http://gpu-host:11434"  # type: ignore[attr-defined]
+
+
+def test_litellm_works_without_registered_key_using_default_base(tmp_path: Path) -> None:
+    """LiteLLM is treated like Ollama when no slot is registered."""
+    factory = make_external_llm_factory(
+        keystore=_keystore_with(tmp_path),
+        external_settings=ExternalSettings(),
+        http_client=_client(),
+    )
+    llm = factory("external:litellm:gpt-4o-mini")
+    assert isinstance(llm, LiteLLMLLM)
+    assert llm.model_id == "external:litellm:gpt-4o-mini"
+    assert llm._base == LITELLM_DEFAULT  # type: ignore[attr-defined]
+    assert llm._api_key == ""  # type: ignore[attr-defined]
+
+
+def test_litellm_url_only_keystore(tmp_path: Path) -> None:
+    factory = make_external_llm_factory(
+        keystore=_keystore_with(tmp_path, litellm="http://lite:4000"),
+        external_settings=ExternalSettings(),
+        http_client=_client(),
+    )
+    llm = factory("external:litellm:claude-3-5-sonnet")
+    assert isinstance(llm, LiteLLMLLM)
+    assert llm._base == "http://lite:4000"  # type: ignore[attr-defined]
+    assert llm._api_key == ""  # type: ignore[attr-defined]
+
+
+def test_litellm_url_and_bearer_keystore(tmp_path: Path) -> None:
+    """``<url>|<key>`` slot splits into base URL + bearer for the adapter."""
+    factory = make_external_llm_factory(
+        keystore=_keystore_with(tmp_path, litellm="http://lite:4000|sk-virt-9"),
+        external_settings=ExternalSettings(),
+        http_client=_client(),
+    )
+    llm = factory("external:litellm:gpt-4o-mini")
+    assert isinstance(llm, LiteLLMLLM)
+    assert llm._base == "http://lite:4000"  # type: ignore[attr-defined]
+    assert llm._api_key == "sk-virt-9"  # type: ignore[attr-defined]
 
 
 def test_make_default_factories_judge_uses_same_llm_router(tmp_path: Path) -> None:
