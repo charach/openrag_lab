@@ -25,12 +25,25 @@ from openrag_lab.infra.fs.workspace_layout import WorkspaceLayout, WorkspacePath
 
 
 class WorkspaceStats:
-    __slots__ = ("chunk_count", "document_count", "experiment_count")
+    __slots__ = (
+        "chunk_count",
+        "document_count",
+        "experiment_count",
+        "indexed_document_count",
+    )
 
-    def __init__(self, *, document_count: int, chunk_count: int, experiment_count: int) -> None:
+    def __init__(
+        self,
+        *,
+        document_count: int,
+        chunk_count: int,
+        experiment_count: int,
+        indexed_document_count: int = 0,
+    ) -> None:
         self.document_count = document_count
         self.chunk_count = chunk_count
         self.experiment_count = experiment_count
+        self.indexed_document_count = indexed_document_count
 
 
 class WorkspaceRegistry:
@@ -122,11 +135,18 @@ class WorkspaceRegistry:
             exp_count_row = conn.execute(
                 "SELECT COUNT(*) AS n FROM experiment WHERE archived = 0",
             ).fetchone()
+            # A document is "indexed" iff at least one chunk exists for it
+            # (under any config). Same definition the per-doc list uses, so
+            # the header total agrees with Library.
+            indexed_row = conn.execute(
+                "SELECT COUNT(DISTINCT document_id) AS n FROM chunk"
+            ).fetchone()
             documents = doc_repo.list_for_workspace(workspace_id)
             return WorkspaceStats(
                 document_count=len(documents),
                 chunk_count=int(chunk_count_row["n"]) if chunk_count_row else 0,
                 experiment_count=int(exp_count_row["n"]) if exp_count_row else 0,
+                indexed_document_count=int(indexed_row["n"]) if indexed_row else 0,
             )
         finally:
             conn.close()

@@ -393,6 +393,9 @@ export function ChunkingLab(): JSX.Element {
             )}
           </div>
 
+          <PreviewStatusHint doc={documents.find((d) => d.id === docId) ?? null} />
+
+
           {error && (
             <div
               className="card"
@@ -432,6 +435,41 @@ export function ChunkingLab(): JSX.Element {
         </div>
       </div>
     </section>
+  );
+}
+
+function PreviewStatusHint({ doc }: { doc: DocumentItem | null }): JSX.Element | null {
+  if (!doc) return null;
+  // The preview is computed live from the source file each render — it
+  // does not consult the persisted chunk table. When the doc isn't
+  // indexed yet (or is mid-indexing), say so up front so the user
+  // doesn't conflate "I see chunks here" with "this doc is indexed."
+  const status = doc.indexing_status;
+  if (status === "indexed") return null;
+  const label = status === "not_indexed" ? "not indexed" : status;
+  const isInProgress = status === "parsing" || status === "chunking" || status === "embedding";
+  return (
+    <div
+      className="card row gap-10 f-center"
+      data-testid="chunking-preview-status-hint"
+      style={{
+        padding: "10px 14px",
+        borderLeft: `2px solid ${
+          isInProgress ? "var(--accent)" : "var(--text-2)"
+        }`,
+      }}
+    >
+      <Icon
+        name={isInProgress ? "play" : "info"}
+        size={11}
+        color={isInProgress ? "var(--accent)" : "var(--text-2)"}
+      />
+      <span className="t-12 t-meta">
+        Library 상에서 이 문서는 <strong style={{ color: "var(--text-1)" }}>{label}</strong>{" "}
+        상태입니다. 위 미리보기는 실시간 계산이며, 슬라이더 값으로 새 인덱스를
+        만들려면 우측 상단의 <em>Run as new experiment</em>를 사용하세요.
+      </span>
+    </div>
   );
 }
 

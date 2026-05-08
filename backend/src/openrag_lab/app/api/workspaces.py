@@ -46,6 +46,7 @@ def _serialize_summary(ws: Workspace, stats: WorkspaceStats) -> dict[str, Any]:
             "document_count": stats.document_count,
             "chunk_count": stats.chunk_count,
             "experiment_count": stats.experiment_count,
+            "indexed_document_count": stats.indexed_document_count,
         },
     }
 

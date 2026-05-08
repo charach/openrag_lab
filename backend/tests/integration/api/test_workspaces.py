@@ -22,7 +22,12 @@ def test_create_returns_201_with_workspace(app_state: AppState) -> None:
     body = resp.json()
     assert body["id"].startswith("ws_")
     assert body["name"] == "변호사 자료실"
-    assert body["stats"] == {"document_count": 0, "chunk_count": 0, "experiment_count": 0}
+    assert body["stats"] == {
+        "document_count": 0,
+        "chunk_count": 0,
+        "experiment_count": 0,
+        "indexed_document_count": 0,
+    }
     assert body["config"]["embedder_id"] is None  # no preset
 
 

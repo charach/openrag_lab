@@ -115,6 +115,8 @@ export interface WorkspaceSummary {
     document_count: number;
     chunk_count: number;
     experiment_count: number;
+    /** Number of documents with at least one chunk row. */
+    indexed_document_count?: number;
   };
 }
 

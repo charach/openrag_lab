@@ -9,6 +9,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { api, type SystemProfileResponse, type WorkspaceSummary } from "../api/client";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useExternalCallStore } from "../stores/externalCall";
+import { useIndexingStore } from "../stores/indexing";
 import { useThemeStore } from "../stores/theme";
 import { useWorkspaceStore } from "../stores/workspace";
 import { ConfigPortModal } from "./ConfigPortModal";
@@ -34,6 +35,10 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
   const externalCall = useExternalCallStore((s) => s.call);
   const externalBegin = useExternalCallStore((s) => s.begin);
   const externalEnd = useExternalCallStore((s) => s.end);
+  // Re-fetch the workspace stats whenever an indexing run finishes — the
+  // header doc counts are driven by the workspaces endpoint, so without
+  // this they'd stay stale until the user reloaded.
+  const indexingPhase = useIndexingStore((s) => s.phase);
 
   // Single global subscription for external-LLM call boundaries. Anything
   // that wraps its LLM with PublishingLLM (chat today, evaluator next)
@@ -93,6 +98,16 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
       .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Refresh stats once an indexing job concludes (done/cancelled/error).
+  // Polling isn't needed — the IndexingStore phase transitions on the
+  // final WS message.
+  useEffect(() => {
+    if (indexingPhase === "done" || indexingPhase === "cancelled" || indexingPhase === "error") {
+      refreshWorkspaces().catch(() => undefined);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [indexingPhase]);
 
   // Close popovers on outside click.
   useEffect(() => {
@@ -248,7 +263,9 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
             </div>
             {ws && (
               <span className="t-meta t-12 t-mono" style={{ marginLeft: 6 }}>
-                {ws.stats.document_count} docs · {ws.stats.chunk_count.toLocaleString()} chunks
+                {ws.stats.document_count} docs ·{" "}
+                {ws.stats.indexed_document_count ?? 0} indexed ·{" "}
+                {ws.stats.chunk_count.toLocaleString()} chunks
               </span>
             )}
             <Icon name="down" size={12} color="var(--text-2)" />
@@ -308,7 +325,9 @@ export function Shell({ children }: { children: React.ReactNode }): JSX.Element 
                     >
                       <span className="t-13">{w.name}</span>
                       <span className="t-meta t-mono t-12">
-                        {w.stats.document_count} docs · {w.stats.chunk_count.toLocaleString()} chunks ·{" "}
+                        {w.stats.document_count} docs ·{" "}
+                        {w.stats.indexed_document_count ?? 0} indexed ·{" "}
+                        {w.stats.chunk_count.toLocaleString()} chunks ·{" "}
                         {w.stats.experiment_count} exp
                       </span>
                     </button>
