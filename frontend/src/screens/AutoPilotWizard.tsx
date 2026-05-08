@@ -128,6 +128,7 @@ export function AutoPilotWizard(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [failedDocs, setFailedDocs] = useState<DocumentItem[]>([]);
+  const [existingDocs, setExistingDocs] = useState<DocumentItem[]>([]);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const indexing = useIndexingStore();
@@ -148,6 +149,26 @@ export function AutoPilotWizard(): JSX.Element {
       })
       .catch(() => undefined);
   }, []);
+
+  // Surface existing workspace documents when targeting "Index into
+  // current" — without this the wizard looked blank on re-entry, making
+  // previously-uploaded files seem to vanish.
+  useEffect(() => {
+    if (workspaceMode !== "existing" || !activeWorkspaceId) {
+      setExistingDocs([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .listDocuments(activeWorkspaceId)
+      .then((r) => {
+        if (!cancelled) setExistingDocs(r.items);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, workspaceMode, indexing.phase]);
 
   const topics = useMemo(
     () => (indexing.task ? [indexing.task.websocket_topic] : []),
@@ -491,6 +512,9 @@ export function AutoPilotWizard(): JSX.Element {
             <div className="col gap-12">
               <WizardDropZone files={files} setFiles={setFiles} />
               {files.length > 0 && <FileList files={files} setFiles={setFiles} />}
+              {workspaceMode === "existing" && existingDocs.length > 0 && (
+                <ExistingDocsPanel docs={existingDocs} />
+              )}
             </div>
           </div>
 
@@ -996,6 +1020,77 @@ function FileList({
       ))}
     </div>
   );
+}
+
+function ExistingDocsPanel({ docs }: { docs: DocumentItem[] }): JSX.Element {
+  const total = docs.length;
+  const indexed = docs.filter((d) => d.indexing_status === "indexed").length;
+  const inProgress = docs.filter((d) =>
+    ["parsing", "chunking", "embedding"].includes(d.indexing_status),
+  ).length;
+  const queued = total - indexed - inProgress;
+  return (
+    <div
+      className="card col"
+      style={{ background: "var(--bg-0)", borderTop: "1px solid var(--border)" }}
+      data-testid="existing-docs-panel"
+    >
+      <div
+        className="row f-center f-between"
+        style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}
+      >
+        <span className="t-label">In this workspace</span>
+        <span className="t-12 t-mono t-meta">
+          {total} doc{total > 1 ? "s" : ""} · {indexed} indexed
+          {inProgress > 0 ? ` · ${inProgress} in progress` : ""}
+          {queued > 0 ? ` · ${queued} queued` : ""}
+        </span>
+      </div>
+      <div style={{ maxHeight: 180, overflowY: "auto" }}>
+        {docs.slice(0, 12).map((d) => (
+          <div
+            key={d.id}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 80px 110px",
+              gap: 8,
+              alignItems: "center",
+              padding: "6px 14px",
+              borderTop: "1px solid var(--border)",
+            }}
+          >
+            <span className="t-13" title={d.filename}>
+              {d.filename}
+            </span>
+            <span className="t-12 t-mono t-meta">{formatBytes(d.size_bytes)}</span>
+            <span className="t-12 t-mono" style={{ color: statusColor(d.indexing_status) }}>
+              {d.indexing_status === "not_indexed" ? "not indexed" : d.indexing_status}
+            </span>
+          </div>
+        ))}
+        {docs.length > 12 && (
+          <div
+            style={{
+              padding: "6px 14px",
+              borderTop: "1px solid var(--border)",
+              color: "var(--text-2)",
+            }}
+            className="t-12 t-meta"
+          >
+            … {docs.length - 12} more
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function statusColor(status: string): string {
+  if (status === "indexed") return "var(--success)";
+  if (status === "embedding") return "var(--accent)";
+  if (status === "failed") return "var(--error)";
+  if (status === "parsing" || status === "chunking") return "var(--text-1)";
+  return "var(--text-2)";
 }
 
 function PerFileList({

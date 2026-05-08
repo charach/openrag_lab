@@ -23,8 +23,9 @@ from openrag_lab.app.state import AppState
 from openrag_lab.domain.errors import OpenRagError, ParseError
 from openrag_lab.domain.models.chunk import ChunkingConfig
 from openrag_lab.domain.models.document import Document
-from openrag_lab.domain.models.enums import ChunkingStrategy
+from openrag_lab.domain.models.enums import ChunkingStrategy, IndexingStage
 from openrag_lab.domain.models.ids import DocumentId, WorkspaceId, new_document_id
+from openrag_lab.domain.services.task_queue import TaskState
 from openrag_lab.infra.db.repositories.checkpoint_repo import (
     IndexingCheckpointRepository,
 )
@@ -124,20 +125,90 @@ async def list_documents(
     registry = _registry(state)
     ws_id = WorkspaceId(workspace_id)
     _require_workspace(registry, ws_id)
+
+    # If an indexing task is currently running on this workspace, in-progress
+    # documents should report parsing/chunking/embedding instead of the
+    # static "not_indexed". The status is derived from the per-doc
+    # checkpoint stage (PARSED → next is chunking, etc.).
+    indexing_active = _workspace_has_indexing_task(state, workspace_id)
+
     items: list[dict[str, Any]] = []
     with registry.open(ws_id) as conn:
         repo = DocumentRepository(conn)
+        checkpoint_repo = IndexingCheckpointRepository(conn)
         for doc in repo.list_for_workspace(ws_id):
             row = conn.execute(
                 "SELECT COUNT(*) AS n FROM chunk WHERE document_id = ?",
                 (str(doc.id),),
             ).fetchone()
             total = int(row["n"]) if row else 0
-            status_str = "indexed" if total > 0 else "not_indexed"
+            status_str = _resolve_document_status(
+                conn=conn,
+                checkpoint_repo=checkpoint_repo,
+                workspace_id=ws_id,
+                document_id=doc.id,
+                chunk_count=total,
+                indexing_active=indexing_active,
+            )
             items.append(
                 _serialize_document(doc, indexing_status=status_str, chunk_count=total)
             )
     return {"items": items, "next_cursor": None}
+
+
+def _workspace_has_indexing_task(state: AppState, workspace_id: str) -> bool:
+    """Return True if any pending/running indexing task targets this workspace."""
+    for task_id, meta in state.task_metadata.items():
+        if meta.kind != "indexing" or meta.workspace_id != workspace_id:
+            continue
+        handle = state.task_queue.status(task_id)
+        if handle is None:
+            continue
+        if handle.state in {TaskState.PENDING, TaskState.RUNNING}:
+            return True
+    return False
+
+
+def _resolve_document_status(
+    *,
+    conn: Any,
+    checkpoint_repo: IndexingCheckpointRepository,
+    workspace_id: WorkspaceId,
+    document_id: DocumentId,
+    chunk_count: int,
+    indexing_active: bool,
+) -> str:
+    """Map (chunks, checkpoints, active task) to a user-facing status string.
+
+    The status set matches the frontend palette in ``Library.tsx`` so the
+    Library, Auto-Pilot stats, and Chunking Lab all read from the same
+    enumeration:
+
+    * ``indexed``     — at least one chunk row exists (under any config).
+    * ``parsing``     — task running, no checkpoint yet.
+    * ``chunking``    — task running, latest checkpoint is PARSED.
+    * ``embedding``   — task running, latest checkpoint is CHUNKED.
+    * ``not_indexed`` — no chunks, no active task.
+    """
+    if chunk_count > 0:
+        return "indexed"
+    if not indexing_active:
+        return "not_indexed"
+    # Pick the most-advanced checkpoint stage seen for this doc across
+    # any config_fingerprint — partial work from a prior run still
+    # informs where the current run will resume.
+    rows = conn.execute(
+        "SELECT status FROM indexing_checkpoint "
+        "WHERE workspace_id = ? AND document_id = ?",
+        (str(workspace_id), str(document_id)),
+    ).fetchall()
+    del checkpoint_repo  # the repo wraps the same conn; raw query is enough
+    stages = {IndexingStage(r["status"]) for r in rows}
+    if IndexingStage.CHUNKED in stages:
+        return "embedding"
+    if IndexingStage.PARSED in stages:
+        return "chunking"
+    return "parsing"
 
 
 @router.post(

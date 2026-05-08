@@ -71,6 +71,104 @@ def test_list_documents_after_upload(app_state: AppState) -> None:
     assert formats == {"txt", "md"}
 
 
+def test_list_documents_reports_indexed_after_indexing(app_state: AppState) -> None:
+    """After a successful indexing pass, ``indexing_status`` flips to ``indexed``."""
+    with TestClient(create_app(state=app_state)) as client:
+        ws = _create_ws(client)
+        _upload(client, ws, ("a.txt", "the quick brown fox " * 5))
+        accepted = client.post(
+            f"/workspaces/{ws}/index",
+            json={
+                "config": {
+                    "embedder_id": "fake-embedder",
+                    "chunking": {
+                        "strategy": "recursive",
+                        "chunk_size": 64,
+                        "chunk_overlap": 0,
+                    },
+                    "retrieval_strategy": "dense",
+                    "top_k": 3,
+                    "llm_id": None,
+                },
+                "force_reindex": True,
+            },
+        ).json()
+        for _ in range(200):
+            t = client.get(f"/tasks/{accepted['task_id']}").json()
+            if t["status"] not in {"pending", "running"}:
+                assert t["status"] == "completed", t
+                break
+
+        items = client.get(f"/workspaces/{ws}/documents").json()["items"]
+    assert len(items) == 1
+    assert items[0]["indexing_status"] == "indexed"
+    assert items[0]["chunk_count"] > 0
+
+
+def test_list_documents_reflects_in_progress_status(app_state: AppState) -> None:
+    """While an indexing task is running, status reflects checkpoint progress.
+
+    The task queue requires an event loop, so we install a fake task
+    metadata + queue handle directly to exercise the status resolver
+    without spinning up a real indexing job.
+    """
+    from openrag_lab.app.services.workspace_registry import WorkspaceRegistry
+    from openrag_lab.app.state import TaskMetadata
+    from openrag_lab.domain.models.enums import IndexingStage
+    from openrag_lab.domain.models.ids import (
+        DocumentId,
+        ExperimentId,
+        TaskId,
+        WorkspaceId,
+        new_task_id,
+    )
+    from openrag_lab.domain.services.task_queue import TaskHandle, TaskState
+    from openrag_lab.infra.db.repositories.checkpoint_repo import (
+        IndexingCheckpointRepository,
+    )
+
+    with TestClient(create_app(state=app_state)) as client:
+        ws_id_str = _create_ws(client)
+        upload = _upload(client, ws_id_str, ("a.txt", "first doc"), ("b.txt", "second doc"))
+        doc_a, doc_b = upload["uploaded"]
+        ws_id = WorkspaceId(ws_id_str)
+
+        # Pretend an indexing task is mid-flight: doc_a has finished
+        # parsing, doc_b is still queued.
+        registry = WorkspaceRegistry(app_state.layout)
+        with registry.open(ws_id) as conn:
+            IndexingCheckpointRepository(conn).upsert(
+                workspace_id=ws_id,
+                document_id=DocumentId(doc_a["id"]),
+                config_fingerprint="fp1",
+                status=IndexingStage.PARSED,
+            )
+
+        # Inject a running task into state so the resolver flips to
+        # in-progress.
+        fake_task_id: TaskId = new_task_id()
+        app_state.task_metadata[fake_task_id] = TaskMetadata(
+            kind="indexing",
+            experiment_id=ExperimentId("exp_dummy"),
+            workspace_id=ws_id_str,
+            websocket_topic="experiment:exp_dummy",
+        )
+        app_state.task_queue._handles[fake_task_id] = TaskHandle(  # type: ignore[attr-defined]
+            id=fake_task_id, state=TaskState.RUNNING
+        )
+
+        try:
+            items = {
+                d["id"]: d for d in client.get(f"/workspaces/{ws_id_str}/documents").json()["items"]
+            }
+        finally:
+            app_state.task_metadata.pop(fake_task_id, None)
+            app_state.task_queue._handles.pop(fake_task_id, None)  # type: ignore[attr-defined]
+
+    assert items[doc_a["id"]]["indexing_status"] == "chunking"
+    assert items[doc_b["id"]]["indexing_status"] == "parsing"
+
+
 def test_delete_document(app_state: AppState) -> None:
     with TestClient(create_app(state=app_state)) as client:
         ws = _create_ws(client)

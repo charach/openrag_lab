@@ -745,8 +745,9 @@ function EmptyState({
 function StatusChip({ status }: { status: string }): JSX.Element {
   const palette: Record<string, { fg: string; dot: string }> = {
     indexed: { fg: "var(--success)", dot: "var(--success)" },
-    embedding: { fg: "var(--accent)", dot: "var(--accent)" },
+    parsing: { fg: "var(--text-1)", dot: "var(--text-1)" },
     chunking: { fg: "var(--text-1)", dot: "var(--text-1)" },
+    embedding: { fg: "var(--accent)", dot: "var(--accent)" },
     queued: { fg: "var(--text-2)", dot: "var(--text-2)" },
     not_indexed: { fg: "var(--text-2)", dot: "var(--text-2)" },
     failed: { fg: "var(--error)", dot: "var(--error)" },
@@ -758,7 +759,7 @@ function StatusChip({ status }: { status: string }): JSX.Element {
       style={{ color: p.fg, borderColor: p.fg === "var(--text-2)" ? "var(--border)" : p.fg }}
     >
       <span className="dot" style={{ background: p.dot }}></span>
-      {status === "not_indexed" ? "queued" : status}
+      {status === "not_indexed" ? "not indexed" : status}
     </span>
   );
 }
