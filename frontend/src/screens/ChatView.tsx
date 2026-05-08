@@ -98,6 +98,8 @@ export function ChatView(): JSX.Element {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
   const [streamingId, setStreamingId] = useState<string | null>(null);
+  const [deleteSelection, setDeleteSelection] = useState<Set<string>>(() => new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -172,6 +174,60 @@ export function ChatView(): JSX.Element {
     } finally {
       setLoading(false);
     }
+  };
+
+  const toggleDeleteSelection = (id: string): void => {
+    setDeleteSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const askBulkDeleteExperiments = (): void => {
+    if (!workspaceId || deleteSelection.size === 0) return;
+    const ids = Array.from(deleteSelection);
+    confirmModal(modal, {
+      title: `Delete ${ids.length} experiment${ids.length > 1 ? "s" : ""}?`,
+      message:
+        "선택한 실험과 그에 연결된 채팅 기록이 모두 삭제됩니다. 되돌릴 수 없습니다.",
+      confirmLabel: "Delete all",
+      danger: true,
+      onConfirm: async () => {
+        setBulkDeleting(true);
+        try {
+          const settled = await Promise.allSettled(
+            ids.map((id) => api.deleteExperiment(workspaceId, id)),
+          );
+          const failed: string[] = [];
+          const succeeded = new Set<string>();
+          settled.forEach((r, i) => {
+            const id = ids[i]!;
+            if (r.status === "fulfilled") succeeded.add(id);
+            else failed.push(id);
+          });
+          setExperiments((prev) => prev.filter((x) => !succeeded.has(x.id)));
+          setDeleteSelection(new Set(failed));
+          if (selected && succeeded.has(selected)) {
+            setSelected(null);
+            setHistory([]);
+            setActiveDetail(null);
+          }
+          if (failed.length > 0) {
+            setError(`삭제 실패: ${failed.length} of ${ids.length}`);
+          } else {
+            toast.push({
+              eyebrow: "Deleted",
+              message: `${ids.length} experiment${ids.length > 1 ? "s" : ""} removed.`,
+              kind: "error",
+            });
+          }
+        } finally {
+          setBulkDeleting(false);
+        }
+      },
+    });
   };
 
   const askDelete = (turn: TurnView): void => {
@@ -372,6 +428,10 @@ export function ChatView(): JSX.Element {
           selected={selected}
           onSelect={setSelected}
           turnCounts={{ [selected ?? ""]: history.length }}
+          deleteSelection={deleteSelection}
+          onToggleDelete={toggleDeleteSelection}
+          onBulkDelete={askBulkDeleteExperiments}
+          bulkDeleting={bulkDeleting}
         />
 
         <div className="col gap-16">
@@ -495,16 +555,41 @@ function ExperimentRail({
   selected,
   onSelect,
   turnCounts,
+  deleteSelection,
+  onToggleDelete,
+  onBulkDelete,
+  bulkDeleting,
 }: {
   experiments: ExperimentSummary[];
   selected: string | null;
   onSelect: (id: string) => void;
   turnCounts: Record<string, number>;
+  deleteSelection: Set<string>;
+  onToggleDelete: (id: string) => void;
+  onBulkDelete: () => void;
+  bulkDeleting: boolean;
 }): JSX.Element {
+  const selectedForDelete = deleteSelection.size;
   return (
     <aside className="card col" style={{ padding: 0, height: "fit-content" }}>
-      <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
+      <div
+        className="row f-between f-center"
+        style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}
+      >
         <span className="t-label">Experiments</span>
+        {selectedForDelete > 0 && (
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={bulkDeleting}
+            onClick={onBulkDelete}
+            aria-label={`delete ${selectedForDelete} selected experiments`}
+            style={{ borderColor: "var(--error)", color: "var(--error)" }}
+          >
+            <Icon name="trash" size={11} />
+            {bulkDeleting ? "Deleting…" : `Delete (${selectedForDelete})`}
+          </button>
+        )}
       </div>
       {experiments.length === 0 ? (
         <p className="t-12 t-meta" style={{ padding: 16 }}>
@@ -514,36 +599,66 @@ function ExperimentRail({
         experiments.map((e) => {
           const active = e.id === selected;
           const count = turnCounts[e.id] ?? 0;
+          const checked = deleteSelection.has(e.id);
           return (
-            <button
+            <div
               key={e.id}
               data-testid="chat-experiment-row"
-              onClick={() => onSelect(e.id)}
               style={{
-                textAlign: "left",
-                padding: "12px 16px",
-                border: 0,
+                display: "grid",
+                gridTemplateColumns: "32px 1fr",
+                alignItems: "stretch",
                 borderBottom: "1px solid var(--border)",
                 borderLeft: `3px solid ${active ? "var(--accent)" : "transparent"}`,
-                background: active ? "var(--bg-2)" : "transparent",
-                color: "var(--text-0)",
-                cursor: "pointer",
-                fontFamily: "inherit",
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
+                background: active
+                  ? "var(--bg-2)"
+                  : checked
+                    ? "var(--bg-2)"
+                    : "transparent",
               }}
             >
-              <div className="row f-between f-center">
-                <span className="t-mono t-13">{e.id.slice(0, 14)}</span>
-                {count > 0 && active && (
-                  <span className="t-mono t-12 t-meta">{count}</span>
-                )}
-              </div>
-              <span className="t-mono t-12 t-meta">
-                fp {e.config_fingerprint.slice(0, 8)} · {e.status}
-              </span>
-            </button>
+              <label
+                aria-label={`select experiment ${e.id.slice(0, 8)} for deletion`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => onToggleDelete(e.id)}
+                  style={{ accentColor: "var(--error)", cursor: "pointer" }}
+                />
+              </label>
+              <button
+                onClick={() => onSelect(e.id)}
+                style={{
+                  textAlign: "left",
+                  padding: "12px 16px 12px 4px",
+                  border: 0,
+                  background: "transparent",
+                  color: "var(--text-0)",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                }}
+              >
+                <div className="row f-between f-center">
+                  <span className="t-mono t-13">{e.id.slice(0, 14)}</span>
+                  {count > 0 && active && (
+                    <span className="t-mono t-12 t-meta">{count}</span>
+                  )}
+                </div>
+                <span className="t-mono t-12 t-meta">
+                  fp {e.config_fingerprint.slice(0, 8)} · {e.status}
+                </span>
+              </button>
+            </div>
           );
         })
       )}

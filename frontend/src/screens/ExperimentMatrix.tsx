@@ -58,6 +58,9 @@ export function ExperimentMatrix(): JSX.Element {
   // [A, B]; a third pick replaces A so the user always sees the *latest
   // two* in the comparison panel below.
   const [abSelection, setAbSelection] = useState<string[]>([]);
+  // Independent of A/B: experiments staged for bulk delete.
+  const [deleteSelection, setDeleteSelection] = useState<Set<string>>(() => new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [detail, setDetail] = useState<ExperimentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -194,6 +197,60 @@ export function ExperimentMatrix(): JSX.Element {
     });
   };
 
+  const toggleDelete = (id: string): void => {
+    setDeleteSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const askBulkDelete = (): void => {
+    if (!workspaceId || deleteSelection.size === 0) return;
+    const ids = Array.from(deleteSelection);
+    confirmModal(modal, {
+      title: `Delete ${ids.length} experiment${ids.length > 1 ? "s" : ""}?`,
+      message:
+        "선택한 실험과 그에 연결된 채팅 기록이 모두 삭제됩니다. 되돌릴 수 없습니다.",
+      confirmLabel: "Delete all",
+      danger: true,
+      onConfirm: async () => {
+        setBulkDeleting(true);
+        try {
+          // Issue deletes in parallel — the API has no batch endpoint.
+          // Partial failures still get applied client-side for the IDs
+          // that succeeded so the user sees forward progress.
+          const settled = await Promise.allSettled(
+            ids.map((id) => api.deleteExperiment(workspaceId, id)),
+          );
+          const failed: string[] = [];
+          const succeeded = new Set<string>();
+          settled.forEach((r, i) => {
+            const id = ids[i]!;
+            if (r.status === "fulfilled") succeeded.add(id);
+            else failed.push(id);
+          });
+          setExperiments((prev) => prev.filter((x) => !succeeded.has(x.id)));
+          setAbSelection((prev) => prev.filter((x) => !succeeded.has(x)));
+          if (openExp && succeeded.has(openExp)) setOpenExp(null);
+          setDeleteSelection(new Set(failed));
+          if (failed.length > 0) {
+            setError(`삭제 실패: ${failed.length} of ${ids.length}`);
+          } else {
+            toast.push({
+              eyebrow: "Deleted",
+              message: `${ids.length} experiment${ids.length > 1 ? "s" : ""} removed.`,
+              kind: "error",
+            });
+          }
+        } finally {
+          setBulkDeleting(false);
+        }
+      },
+    });
+  };
+
   const sorted = useMemo(() => {
     const rows = [...experiments];
     rows.sort((a, b) => {
@@ -270,6 +327,42 @@ export function ExperimentMatrix(): JSX.Element {
         onLaunched={refreshExperiments}
       />
 
+      {deleteSelection.size > 0 && (
+        <div
+          className="card row f-center fade-in"
+          style={{
+            marginTop: 24,
+            padding: "10px 16px",
+            gap: 12,
+            borderLeft: "2px solid var(--error)",
+          }}
+        >
+          <span className="t-13">
+            <span className="t-mono" style={{ color: "var(--error)" }}>
+              {deleteSelection.size}
+            </span>{" "}
+            selected for deletion
+          </span>
+          <div style={{ flex: 1 }} />
+          <button
+            className="btn btn-sm"
+            disabled={bulkDeleting}
+            onClick={askBulkDelete}
+            style={{ borderColor: "var(--error)", color: "var(--error)" }}
+          >
+            <Icon name="trash" size={11} />
+            {bulkDeleting ? "Deleting…" : "Delete selected"}
+          </button>
+          <button
+            className="btn btn-sm"
+            disabled={bulkDeleting}
+            onClick={() => setDeleteSelection(new Set())}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       <div
         className="card"
         style={{ marginTop: 24, padding: 0, overflowX: "auto" }}
@@ -277,6 +370,30 @@ export function ExperimentMatrix(): JSX.Element {
         <table style={{ minWidth: 1080, width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ borderBottom: "1px solid var(--border)" }}>
+              <th
+                style={{
+                  textAlign: "left",
+                  padding: "10px 14px",
+                  borderBottom: "1px solid var(--border)",
+                  width: 32,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  aria-label="select all experiments for deletion"
+                  checked={
+                    sorted.length > 0 && sorted.every((e) => deleteSelection.has(e.id))
+                  }
+                  onChange={() => {
+                    if (sorted.length > 0 && sorted.every((e) => deleteSelection.has(e.id))) {
+                      setDeleteSelection(new Set());
+                    } else {
+                      setDeleteSelection(new Set(sorted.map((e) => e.id)));
+                    }
+                  }}
+                  style={{ accentColor: "var(--error)", cursor: "pointer" }}
+                />
+              </th>
               <Th label="A/B" />
               <Th label="Experiment" />
               <Th label="Status" />
@@ -306,7 +423,7 @@ export function ExperimentMatrix(): JSX.Element {
           <tbody>
             {sorted.length === 0 ? (
               <tr>
-                <td colSpan={4 + 1 + METRICS.length + 1} style={{ padding: 24 }}>
+                <td colSpan={5 + 1 + METRICS.length + 1} style={{ padding: 24 }}>
                   <p className="t-meta t-13">아직 실험이 없습니다.</p>
                 </td>
               </tr>
@@ -315,6 +432,7 @@ export function ExperimentMatrix(): JSX.Element {
                 const archived = e.status === "archived";
                 const abIndex = abSelection.indexOf(e.id);
                 const abLabel = abIndex === 0 ? "A" : abIndex === 1 ? "B" : null;
+                const checkedForDelete = deleteSelection.has(e.id);
                 return (
                   <tr
                     key={e.id}
@@ -325,12 +443,24 @@ export function ExperimentMatrix(): JSX.Element {
                       background:
                         openExp === e.id
                           ? "var(--bg-2)"
-                          : abLabel
+                          : checkedForDelete
                             ? "var(--bg-2)"
-                            : undefined,
+                            : abLabel
+                              ? "var(--bg-2)"
+                              : undefined,
                       opacity: archived ? 0.45 : 1,
                     }}
                   >
+                    <Td>
+                      <input
+                        type="checkbox"
+                        aria-label={`select experiment ${e.id.slice(0, 8)} for deletion`}
+                        checked={checkedForDelete}
+                        onChange={() => toggleDelete(e.id)}
+                        onClick={(ev) => ev.stopPropagation()}
+                        style={{ accentColor: "var(--error)", cursor: "pointer" }}
+                      />
+                    </Td>
                     <Td>
                       <button
                         type="button"
