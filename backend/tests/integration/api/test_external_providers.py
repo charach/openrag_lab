@@ -41,11 +41,16 @@ def test_list_providers_returns_all_four_unregistered_initially(app_state: AppSt
     assert resp.status_code == 200
     body = resp.json()
     ids = {p["id"] for p in body["providers"]}
-    assert ids == {"openai", "anthropic", "gemini", "openrouter"}
+    assert ids == {"openai", "anthropic", "gemini", "openrouter", "ollama"}
     for p in body["providers"]:
         assert p["key_registered"] is False
         assert "key_suffix" not in p
         assert isinstance(p["supported_models"], list) and p["supported_models"]
+    # Only the local HTTP provider exposes url_based=True; the rest are
+    # API-key based.
+    by_id = {p["id"]: p for p in body["providers"]}
+    assert by_id["ollama"]["url_based"] is True
+    assert by_id["openai"]["url_based"] is False
 
 
 def test_list_providers_marks_registered_with_suffix(app_state: AppState) -> None:
@@ -130,6 +135,33 @@ def test_register_key_records_rate_limited_status(app_state: AppState) -> None:
     assert resp.status_code == 200
     assert resp.json()["validation_status"] == "rate_limited"
     assert Keystore(state.layout.api_keys_yaml).get(ExternalProvider.OPENROUTER) == "or-x"
+
+
+def test_register_ollama_with_url_pings_tags_endpoint(app_state: AppState) -> None:
+    """Ollama validation hits ``<base>/api/tags`` — the key slot is a URL."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"models": []})
+
+    state = _state_with_http(app_state, handler)
+    with TestClient(create_app(state=state)) as client:
+        resp = client.post(
+            "/system/external-providers/ollama/key",
+            json={"key": "http://localhost:11434", "validate_now": True},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["validation_status"] == "ok"
+    assert seen["url"] == "http://localhost:11434/api/tags"
+    # No bearer auth header is sent for the local HTTP provider.
+    assert seen["auth"] is None
+    # The URL is persisted in the keystore exactly as supplied.
+    assert (
+        Keystore(state.layout.api_keys_yaml).get(ExternalProvider.OLLAMA)
+        == "http://localhost:11434"
+    )
 
 
 def test_register_key_unknown_provider_returns_422(app_state: AppState) -> None:

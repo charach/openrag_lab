@@ -44,6 +44,7 @@ _PROVIDER_DISPLAY: dict[ExternalProvider, str] = {
     ExternalProvider.ANTHROPIC: "Anthropic",
     ExternalProvider.GEMINI: "Google Gemini",
     ExternalProvider.OPENROUTER: "OpenRouter",
+    ExternalProvider.OLLAMA: "Ollama (HTTP)",
 }
 
 _SUPPORTED_MODELS: dict[ExternalProvider, list[str]] = {
@@ -58,7 +59,12 @@ _SUPPORTED_MODELS: dict[ExternalProvider, list[str]] = {
         "meta-llama/llama-3-70b-instruct",
         "anthropic/claude-3.5-sonnet",
     ],
+    ExternalProvider.OLLAMA: ["llama3", "mistral", "qwen2.5", "phi3"],
 }
+
+# Providers that store a base URL in place of an API key. The UI shows
+# a URL input and skips the key-validation prompt.
+_URL_BASED_PROVIDERS: set[ExternalProvider] = {ExternalProvider.OLLAMA}
 
 
 # ---------------------------------------------------------------------------
@@ -119,12 +125,20 @@ async def _validate_key(
             resp = await client.get(
                 f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
             )
-        else:
-            assert provider is ExternalProvider.OPENROUTER
+        elif provider is ExternalProvider.OPENROUTER:
             resp = await client.get(
                 "https://openrouter.ai/api/v1/models",
                 headers={"authorization": f"Bearer {key}"},
             )
+        else:
+            assert provider is ExternalProvider.OLLAMA
+            from openrag_lab.adapters.llms.ollama import (
+                DEFAULT_BASE_URL,
+                _normalize_base,
+            )
+
+            base = _normalize_base(key) if key else DEFAULT_BASE_URL
+            resp = await client.get(f"{base}/api/tags")
     except httpx.TimeoutException:
         return "network_error"
     except httpx.HTTPError:
@@ -181,6 +195,7 @@ async def list_providers(
             "name": _PROVIDER_DISPLAY[provider],
             "key_registered": registered_key is not None,
             "supported_models": list(_SUPPORTED_MODELS[provider]),
+            "url_based": provider in _URL_BASED_PROVIDERS,
         }
         if registered_key is not None:
             item["key_suffix"] = _key_suffix(registered_key)

@@ -10,6 +10,7 @@ import pytest
 from openrag_lab.adapters.llms.anthropic import AnthropicLLM
 from openrag_lab.adapters.llms.gemini import GeminiLLM
 from openrag_lab.adapters.llms.null import NullLLM
+from openrag_lab.adapters.llms.ollama import DEFAULT_BASE_URL, OllamaLLM
 from openrag_lab.adapters.llms.openai import OpenAILLM
 from openrag_lab.adapters.llms.openrouter import OpenRouterLLM
 from openrag_lab.app.services.runtime import (
@@ -113,6 +114,32 @@ def test_provider_not_in_allow_list_blocked(tmp_path: Path) -> None:
         factory("external:openai:gpt-4o")
     assert ei.value.code == "EXTERNAL_PROVIDER_NOT_ALLOWED"
     assert ei.value.details["provider"] == "openai"
+
+
+def test_ollama_works_without_registered_key_using_default_base(tmp_path: Path) -> None:
+    """Ollama is the local HTTP provider — no key required to instantiate."""
+    factory = make_external_llm_factory(
+        keystore=_keystore_with(tmp_path),  # nothing registered
+        external_settings=ExternalSettings(),
+        http_client=_client(),
+    )
+    llm = factory("external:ollama:llama3")
+    assert isinstance(llm, OllamaLLM)
+    assert llm.model_id == "external:ollama:llama3"
+    # The adapter should fall back to the documented localhost default.
+    assert llm._base == DEFAULT_BASE_URL  # type: ignore[attr-defined]
+
+
+def test_ollama_uses_registered_url_override(tmp_path: Path) -> None:
+    """Registered keystore value is treated as the base URL override."""
+    factory = make_external_llm_factory(
+        keystore=_keystore_with(tmp_path, ollama="http://gpu-host:11434"),
+        external_settings=ExternalSettings(),
+        http_client=_client(),
+    )
+    llm = factory("external:ollama:mistral")
+    assert isinstance(llm, OllamaLLM)
+    assert llm._base == "http://gpu-host:11434"  # type: ignore[attr-defined]
 
 
 def test_make_default_factories_judge_uses_same_llm_router(tmp_path: Path) -> None:

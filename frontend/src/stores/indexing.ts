@@ -43,6 +43,7 @@ interface IndexingState {
   task: IndexAcceptedResponse | null;
   progress: WSMessage | null;
   files: Record<string, FileProgress>;
+  totalFiles: number;
   workspaceId: string | null;
   error: string | null;
   startStarting: (workspaceId: string) => void;
@@ -72,6 +73,7 @@ export const useIndexingStore = create<IndexingState>((set) => ({
   task: null,
   progress: null,
   files: {},
+  totalFiles: 0,
   workspaceId: null,
   error: null,
   startStarting: (workspaceId) =>
@@ -81,6 +83,7 @@ export const useIndexingStore = create<IndexingState>((set) => ({
       task: null,
       progress: null,
       files: {},
+      totalFiles: 0,
       workspaceId,
       error: null,
     }),
@@ -95,6 +98,9 @@ export const useIndexingStore = create<IndexingState>((set) => ({
     if (msg.type === "resumed") {
       set({ paused: false });
       return;
+    }
+    if (msg.type === "started" && typeof msg.total_documents === "number") {
+      set({ totalFiles: msg.total_documents });
     }
     set((s) => ({
       progress: msg,
@@ -135,6 +141,7 @@ export const useIndexingStore = create<IndexingState>((set) => ({
       task: null,
       progress: null,
       files: {},
+      totalFiles: 0,
       workspaceId: null,
       error: null,
     }),

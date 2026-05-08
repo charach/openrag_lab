@@ -47,19 +47,73 @@ function isAcceptedExtension(filename: string): boolean {
 type PresetEntry = PresetResponse["presets"][number];
 type WorkspaceMode = "existing" | "new";
 
-/** Map an arbitrary stage label to one of three known buckets. */
+/** The three tiles shown in Step 03 — driven by per-file aggregate. */
 type StageKey = "parse" | "chunk" | "embed";
 
-function bucketStage(stage: string | null): StageKey | null {
-  if (!stage) return null;
-  const lower = stage.toLowerCase();
-  if (lower.startsWith("parse") || lower.startsWith("parsed")) return "parse";
-  if (lower.startsWith("chunk")) return "chunk";
-  if (lower.startsWith("embed")) return "embed";
-  return null;
+const STAGE_ORDER: StageKey[] = ["parse", "chunk", "embed"];
+
+interface TileSummary {
+  /** Files that have completed this stage (or skipped past it). */
+  done: number;
+  /** Files currently in this stage. */
+  active: number;
+  /** Files past this stage entirely (already in a later one). */
+  past: number;
 }
 
-const STAGE_ORDER: StageKey[] = ["parse", "chunk", "embed"];
+/**
+ * Aggregate per-file progress into the three pipeline tiles.
+ *
+ * The backend emits ``file_stage`` for each file as it progresses
+ * through ``parsing → chunking → embedding → embedded``. Skipped files
+ * jump straight to ``skipped`` (they were already embedded under this
+ * config). Failed files stop wherever they were.
+ *
+ * For each tile we count how many files have *completed* its stage —
+ * a file in ``embedding`` has completed parse and chunk, etc. The
+ * resulting ratio (done / total) is what the tile shows.
+ */
+function aggregateTiles(
+  files: Record<string, import("../stores/indexing").FileProgress>,
+): Record<StageKey, TileSummary> {
+  const summary: Record<StageKey, TileSummary> = {
+    parse: { done: 0, active: 0, past: 0 },
+    chunk: { done: 0, active: 0, past: 0 },
+    embed: { done: 0, active: 0, past: 0 },
+  };
+  for (const f of Object.values(files)) {
+    switch (f.stage) {
+      case "parsing":
+        summary.parse.active++;
+        break;
+      case "chunking":
+        summary.parse.done++;
+        summary.parse.past++;
+        summary.chunk.active++;
+        break;
+      case "embedding":
+        summary.parse.done++;
+        summary.parse.past++;
+        summary.chunk.done++;
+        summary.chunk.past++;
+        summary.embed.active++;
+        break;
+      case "embedded":
+      case "skipped":
+        summary.parse.done++;
+        summary.parse.past++;
+        summary.chunk.done++;
+        summary.chunk.past++;
+        summary.embed.done++;
+        break;
+      case "failed":
+      case "queued":
+      default:
+        break;
+    }
+  }
+  return summary;
+}
 
 export function AutoPilotWizard(): JSX.Element {
   const modal = useModal();
@@ -114,7 +168,19 @@ export function AutoPilotWizard(): JSX.Element {
     : typeof indexing.progress?.type === "string"
       ? indexing.progress.type
       : null;
-  const stage = bucketStage(stageRaw);
+  const tiles = useMemo(() => aggregateTiles(indexing.files), [indexing.files]);
+  const denom = Math.max(indexing.totalFiles, Object.keys(indexing.files).length, 1);
+  // Pick a coarse "current stage" — the earliest tile that still has
+  // active or unfinished work. Used for the breadcrumb label.
+  const currentStage: StageKey | null = (() => {
+    for (const k of STAGE_ORDER) {
+      if (tiles[k].active > 0) return k;
+    }
+    for (const k of STAGE_ORDER) {
+      if (tiles[k].done < denom) return k;
+    }
+    return null;
+  })();
   const isActive =
     indexing.phase === "starting" || indexing.phase === "running" || indexing.phase === "done";
   const isStarting = indexing.phase === "starting";
@@ -222,7 +288,20 @@ export function AutoPilotWizard(): JSX.Element {
       workspaceId = ws.id;
     }
     indexing.startStarting(workspaceId);
-    if (files.length > 0) await api.uploadDocuments(workspaceId, files);
+    if (files.length > 0) {
+      const upload = await api.uploadDocuments(workspaceId, files);
+      const parts: string[] = [];
+      if (upload.uploaded.length > 0) parts.push(`${upload.uploaded.length} new`);
+      if (upload.skipped.length > 0) parts.push(`${upload.skipped.length} duplicate`);
+      if (upload.failed.length > 0) parts.push(`${upload.failed.length} failed`);
+      if (parts.length > 0) {
+        toast.push({
+          eyebrow: "Upload",
+          message: parts.join(" · "),
+          kind: upload.failed.length > 0 ? "error" : undefined,
+        });
+      }
+    }
     const accepted = await api.startIndex(workspaceId, {
       config: {
         embedder_id: preset.config.embedder_id,
@@ -446,7 +525,7 @@ export function AutoPilotWizard(): JSX.Element {
               isStarting
                 ? "starting…"
                 : ratio !== null
-                  ? `${(ratio * 100).toFixed(1)}% · ${stage ?? stageRaw ?? "running"}`
+                  ? `${(ratio * 100).toFixed(1)}% · ${currentStage ?? stageRaw ?? "running"}`
                   : "running"
             }
           >
@@ -479,24 +558,28 @@ export function AutoPilotWizard(): JSX.Element {
                 </div>
               </div>
 
-              {/* Stage breakdown */}
+              {/* Stage breakdown — counts files completed per stage. */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                {STAGE_ORDER.map((s) => (
-                  <StageCard
-                    key={s}
-                    label={s === "parse" ? "Parsed" : s === "chunk" ? "Chunked" : "Embedded"}
-                    state={
-                      stage === null
-                        ? "todo"
-                        : STAGE_ORDER.indexOf(s) < STAGE_ORDER.indexOf(stage)
-                          ? "done"
-                          : stage === s
-                            ? "active"
-                            : "todo"
-                    }
-                    ratio={stage === s ? ratio : stage === null ? null : 1}
-                  />
-                ))}
+                {STAGE_ORDER.map((s) => {
+                  const t = tiles[s];
+                  const ratioForTile = denom > 0 ? t.done / denom : 0;
+                  const tileState: "todo" | "active" | "done" =
+                    t.done >= denom && denom > 0
+                      ? "done"
+                      : t.active > 0 || t.past > 0
+                        ? "active"
+                        : "todo";
+                  return (
+                    <StageCard
+                      key={s}
+                      label={s === "parse" ? "Parsed" : s === "chunk" ? "Chunked" : "Embedded"}
+                      state={tileState}
+                      ratio={ratioForTile}
+                      done={t.done}
+                      total={denom}
+                    />
+                  );
+                })}
               </div>
 
               {/* Per-file progress rows */}
@@ -723,10 +806,14 @@ function StageCard({
   label,
   state,
   ratio,
+  done,
+  total,
 }: {
   label: string;
   state: "todo" | "active" | "done";
   ratio: number | null;
+  done: number;
+  total: number;
 }): JSX.Element {
   const isActive = state === "active";
   const isDone = state === "done";
@@ -756,9 +843,9 @@ function StageCard({
           color: isActive ? "var(--accent)" : isDone ? "var(--text-0)" : "var(--text-2)",
         }}
       >
-        {isDone ? "100" : isActive && ratio !== null ? (ratio * 100).toFixed(0) : "—"}
+        {total > 0 ? `${done}/${total}` : "—"}
         <span className="t-12 t-meta" style={{ marginLeft: 4 }}>
-          {isDone || (isActive && ratio !== null) ? "%" : ""}
+          {total > 0 ? "files" : ""}
         </span>
       </div>
       <div

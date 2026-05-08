@@ -307,11 +307,17 @@ export function Library(): JSX.Element {
     setUploading(true);
     setError(null);
     try {
-      await api.uploadDocuments(workspaceId, files);
+      const r = await api.uploadDocuments(workspaceId, files);
       await refresh();
+      const parts: string[] = [];
+      if (r.uploaded.length > 0) parts.push(`${r.uploaded.length} added`);
+      if (r.skipped.length > 0) parts.push(`${r.skipped.length} duplicate`);
+      if (r.failed.length > 0) parts.push(`${r.failed.length} failed`);
+      const summary = parts.length > 0 ? parts.join(" · ") : "no files accepted";
       toast.push({
-        eyebrow: "Queued",
-        message: `${files.length} file${files.length > 1 ? "s" : ""} added.`,
+        eyebrow: r.uploaded.length > 0 ? "Queued" : "Skipped",
+        message: summary,
+        kind: r.failed.length > 0 ? "error" : undefined,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

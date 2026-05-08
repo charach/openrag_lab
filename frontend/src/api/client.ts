@@ -294,7 +294,14 @@ export const api = {
   uploadDocuments: async (
     workspaceId: string,
     files: File[],
-  ): Promise<{ uploaded: DocumentItem[]; skipped: unknown[]; failed: unknown[] }> => {
+  ): Promise<{
+    uploaded: DocumentItem[];
+    skipped: Array<{ filename: string; reason: string; existing_id?: string }>;
+    failed: Array<{
+      filename: string;
+      error: { code: string; message: string; recoverable: boolean };
+    }>;
+  }> => {
     const fd = new FormData();
     for (const f of files) fd.append("files", f, f.name);
     const resp = await fetch(`${BASE}/workspaces/${workspaceId}/documents`, {
@@ -541,4 +548,5 @@ export interface ExternalProvider {
   key_suffix?: string;
   validation_status?: string;
   supported_models: string[];
+  url_based?: boolean;
 }

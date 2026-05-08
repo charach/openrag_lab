@@ -20,6 +20,10 @@ class ExternalProvider(StrEnum):
     ANTHROPIC = "anthropic"
     GEMINI = "gemini"
     OPENROUTER = "openrouter"
+    # OpenAI-compatible HTTP endpoint (e.g. Ollama, vLLM, LM Studio). The
+    # keystore slot stores the base URL instead of an API key — no auth
+    # is sent on requests.
+    OLLAMA = "ollama"
 
 
 @dataclass(frozen=True)

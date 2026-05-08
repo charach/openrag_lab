@@ -46,6 +46,7 @@ def test_parse_unknown_provider_raises_with_supported_list() -> None:
         "anthropic",
         "gemini",
         "openrouter",
+        "ollama",
     }
 
 

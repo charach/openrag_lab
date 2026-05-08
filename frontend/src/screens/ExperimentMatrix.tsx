@@ -459,6 +459,17 @@ export function ExperimentMatrix(): JSX.Element {
                 >
                   Evaluate with golden set
                 </button>
+                <div style={{ flex: 1 }} />
+                <button
+                  className="btn btn-sm"
+                  style={{ color: "var(--error)", borderColor: "var(--error)" }}
+                  onClick={() => {
+                    const exp = experiments.find((x) => x.id === openExp);
+                    if (exp) askDeleteExperiment(exp);
+                  }}
+                >
+                  <Icon name="trash" size={11} /> Delete
+                </button>
               </div>
               <DetailBody detail={detail} />
             </>

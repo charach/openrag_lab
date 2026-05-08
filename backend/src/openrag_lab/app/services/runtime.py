@@ -118,6 +118,13 @@ def _build_external_llm(
         from openrag_lab.adapters.llms.openrouter import OpenRouterLLM
 
         return OpenRouterLLM(model=model, api_key=api_key, client=client)
+    if ref_provider is ExternalProvider.OLLAMA:
+        from openrag_lab.adapters.llms.ollama import DEFAULT_BASE_URL, OllamaLLM
+
+        # The keystore stores the base URL in the api_key slot for Ollama.
+        # Empty string falls back to the local default.
+        base_url = api_key if api_key else DEFAULT_BASE_URL
+        return OllamaLLM(model=model, base_url=base_url, client=client)
     raise ConfigurationError(
         f"지원하지 않는 외부 제공자입니다: {ref_provider!r}.",
         code="EXTERNAL_PROVIDER_UNKNOWN",
@@ -160,7 +167,13 @@ def make_external_llm_factory(
                     "allowed": list(external_settings.allowed_providers),
                 },
             )
-        api_key = keystore.require(ref.provider)
+        # Ollama doesn't need an API key — the keystore slot stores an
+        # optional base URL override. Empty string falls back to the
+        # adapter default (http://localhost:11434).
+        if ref.provider is ExternalProvider.OLLAMA:
+            api_key = keystore.get(ref.provider) or ""
+        else:
+            api_key = keystore.require(ref.provider)
         return _build_external_llm(
             ref.provider, model=ref.model, api_key=api_key, client=http_client
         )

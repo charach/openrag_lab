@@ -40,7 +40,9 @@ export function ExternalProviders(): JSX.Element {
 
   const openRegister = (p: ExternalProvider): void => {
     setRegistering(p);
-    setKeyDraft("");
+    // For URL-based providers (Ollama et al.) prefill the local default
+    // so the user only has to confirm or tweak the host.
+    setKeyDraft(p.url_based ? "http://localhost:11434" : "");
     setValidateNow(true);
     setRegisterError(null);
   };
@@ -203,19 +205,32 @@ export function ExternalProviders(): JSX.Element {
           }
         >
           <label className="t-label" style={{ display: "block", marginBottom: 8 }}>
-            API key
+            {registering.url_based ? "Base URL" : "API key"}
           </label>
           <input
             className="input"
-            type="password"
+            type={registering.url_based ? "text" : "password"}
             autoFocus
             autoComplete="off"
             spellCheck={false}
             value={keyDraft}
             onChange={(e) => setKeyDraft(e.target.value)}
-            placeholder={registering.id === "openai" ? "sk-..." : "API key"}
-            aria-label="api key"
+            placeholder={
+              registering.url_based
+                ? "http://localhost:11434"
+                : registering.id === "openai"
+                  ? "sk-..."
+                  : "API key"
+            }
+            aria-label={registering.url_based ? "base url" : "api key"}
           />
+          {registering.url_based && (
+            <p className="t-12 t-meta" style={{ marginTop: 8 }}>
+              OpenAI-compatible <code>/v1/chat/completions</code> 엔드포인트.
+              Ollama·vLLM·LM Studio 같은 로컬 서버에 사용하세요. 인증 헤더는
+              전송되지 않습니다.
+            </p>
+          )}
           <label
             className="row gap-8 f-center t-12"
             style={{ marginTop: 12, cursor: "pointer", userSelect: "none" }}
@@ -226,7 +241,9 @@ export function ExternalProviders(): JSX.Element {
               onChange={(e) => setValidateNow(e.target.checked)}
               disabled={busy}
             />
-            <span>Validate against {registering.name} now</span>
+            <span>
+              {registering.url_based ? "Ping" : "Validate against"} {registering.name} now
+            </span>
           </label>
           {registerError && (
             <p className="t-12" style={{ color: "var(--error)", marginTop: 12 }} role="alert">
